@@ -1,0 +1,60 @@
+import AppKit
+import SwiftUI
+
+@main
+struct WorktreeSweeperApp: App {
+  init() {
+    if let index = CommandLine.arguments.firstIndex(of: "--audit") {
+      let repo = CommandLine.arguments.dropFirst(index + 1).first ?? SweeperModel.defaultRepo
+      Task.detached { await Self.printAudit(repo: (repo as NSString).expandingTildeInPath); exit(0) }
+      RunLoop.main.run()
+    }
+    NSApplication.shared.setActivationPolicy(.regular)
+  }
+
+  var body: some Scene {
+    WindowGroup("Worktree Sweeper") {
+      ContentView()
+        .frame(minWidth: 1000, minHeight: 500)
+        .onAppear { NSApp.activate(ignoringOtherApps: true) }
+    }
+    .defaultSize(width: 1400, height: 800)
+    .commands {
+      CommandGroup(replacing: .appInfo) {
+        Button("About Worktree Sweeper") { Self.showAbout() }
+      }
+    }
+  }
+
+  private static func showAbout() {
+    let year = Calendar.current.component(.year, from: Date())
+    let font = NSFont.systemFont(ofSize: 12)
+    let credits = NSMutableAttributedString(string: "Made by Jonathan Stassen\n", attributes: [.font: font])
+    credits.append(NSAttributedString(string: "jstassen.com", attributes: [.font: font, .link: "https://jstassen.com"]))
+    NSApplication.shared.orderFrontStandardAboutPanel(options: [
+      .applicationName: "Worktree Sweeper",
+      .applicationVersion: "0.1",
+      .credits: credits,
+      NSApplication.AboutPanelOptionKey(rawValue: "Copyright"): "© \(year) Jonathan Stassen",
+    ])
+  }
+
+  private static func printAudit(repo: String) async {
+    let auditor = Auditor(repo: repo)
+    let worktrees = await Auditor.auditAll(auditor.discoverWorktrees()) { auditor.audit($0) }
+    let branches = await Auditor.auditAll(auditor.discoverBranches(worktrees: worktrees)) { auditor.audit($0) }
+    let stashes = await Auditor.auditAll(auditor.discoverStashes()) { auditor.audit($0) }
+    printSection("Worktrees", worktrees.map { ($0.verdict, $0.status.lastCommitDate, "\($0.name) [\($0.branchLabel)]", $0.notes) })
+    printSection("Branches", branches.map { ($0.verdict, $0.status.lastCommitDate, $0.name, $0.notes) })
+    printSection("Stashes", stashes.map { ($0.verdict, $0.date, $0.message, $0.notes) })
+  }
+
+  private static func printSection(_ title: String, _ rows: [(Verdict, Date, String, [String])]) {
+    print("== \(title)")
+    for (verdict, date, label, notes) in rows.sorted(by: { ($0.0, $0.1) < ($1.0, $1.1) }) {
+      let day = date.formatted(Date.ISO8601FormatStyle(timeZone: .current).year().month().day())
+      print("\(verdict.rawValue.padding(toLength: 10, withPad: " ", startingAt: 0)) \(day)  \(label)  \(notes.joined(separator: ", "))")
+    }
+    print()
+  }
+}
