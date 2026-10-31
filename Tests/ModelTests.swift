@@ -98,8 +98,10 @@ private extension Array {
 }
 
 @MainActor
-private func makeModel(_ auditor: FakeAuditor, defaults: UserDefaults = freshDefaults(), clock: Clock = Clock()) -> SweeperModel {
-  SweeperModel(scanner: FakeScanner(auditor: auditor), defaults: defaults, openTargets: []) { clock.now }
+private func makeModel(_ auditor: FakeAuditor, path: String = "/repo", defaults: UserDefaults = freshDefaults(), clock: Clock = Clock()) -> SweeperModel {
+  let model = SweeperModel(scanner: FakeScanner(auditor: auditor), defaults: defaults, openTargets: []) { clock.now }
+  model.repoPath = path
+  return model
 }
 
 private func freshDefaults() -> UserDefaults { UserDefaults(suiteName: "WorktreeSweeperTests-\(UUID().uuidString)")! }
@@ -218,10 +220,10 @@ private func waitUntil(_ condition: @MainActor () -> Bool, sourceLocation: Sourc
 
 @MainActor @Test func theRepoPathIsRemembered() {
   let defaults = freshDefaults()
-  let first = makeModel(FakeAuditor(), defaults: defaults)
-  #expect(first.repoPath == SweeperModel.defaultRepo)
-  first.repoPath = "~/Code/other"
-  #expect(makeModel(FakeAuditor(), defaults: defaults).repoPath == "~/Code/other")
+  let fresh = SweeperModel(scanner: FakeScanner(auditor: FakeAuditor()), defaults: defaults, openTargets: [])
+  #expect(fresh.repoPath == "")
+  fresh.repoPath = "~/Code/other"
+  #expect(SweeperModel(scanner: FakeScanner(auditor: FakeAuditor()), defaults: defaults, openTargets: []).repoPath == "~/Code/other")
 }
 
 @MainActor @Test func selectingAStashLoadsItsPreviewAndDroppingClearsIt() async {
@@ -241,4 +243,14 @@ private func waitUntil(_ condition: @MainActor () -> Bool, sourceLocation: Sourc
   #expect(model.stashSelection == nil)
   #expect(model.stashPreview == nil)
   #expect(await auditor.actions == ["drop ddd"])
+}
+
+@MainActor @Test func anEmptyRepoPathAsksForAFolderInsteadOfScanning() async {
+  let auditor = FakeAuditor()
+  let model = makeModel(auditor, path: "")
+  model.rescan()
+  #expect(model.errorMessage == "Choose a repository folder.")
+  #expect(!model.isLoading)
+  try? await Task.sleep(for: .milliseconds(50))
+  #expect(model.worktrees.isEmpty)
 }

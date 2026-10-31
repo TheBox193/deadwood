@@ -85,6 +85,7 @@ final class SweeperModel: ObservableObject {
     activeLoads = 0
     warnings = []
     let repo = (repoPath as NSString).expandingTildeInPath
+    guard !repo.isEmpty else { return errorMessage = "Choose a repository folder." }
     let scanner = self.scanner
     track(Task {
       let foundWorktrees = await scanner.discoverWorktrees(repo: repo)
@@ -166,7 +167,7 @@ final class SweeperModel: ObservableObject {
     let panel = NSOpenPanel()
     panel.canChooseDirectories = true
     panel.canChooseFiles = false
-    panel.directoryURL = URL(fileURLWithPath: (repoPath as NSString).expandingTildeInPath)
+    panel.directoryURL = URL(fileURLWithPath: repoPath.isEmpty ? NSHomeDirectory() : (repoPath as NSString).expandingTildeInPath)
     guard panel.runModal() == .OK, let url = panel.url else { return }
     repoPath = url.path.replacingOccurrences(of: NSHomeDirectory(), with: "~")
     rescan()

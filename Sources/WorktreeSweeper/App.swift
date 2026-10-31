@@ -5,7 +5,7 @@ import SwiftUI
 struct WorktreeSweeperApp: App {
   init() {
     if let index = CommandLine.arguments.firstIndex(of: "--audit") {
-      let repo = CommandLine.arguments.dropFirst(index + 1).first ?? SweeperModel.defaultRepo
+      let repo = CommandLine.arguments.dropFirst(index + 1).first ?? FileManager.default.currentDirectoryPath
       Task { await Self.printAudit(repo: (repo as NSString).expandingTildeInPath); exit(0) }
       RunLoop.main.run()
     }

@@ -8,7 +8,7 @@ A small SwiftUI app that lists a repository's git worktrees, local branches and 
 swift run
 ```
 
-Print the same audit as text without opening a window:
+Print the same audit as text without opening a window (the path defaults to the current directory):
 
 ```bash
 swift run WorktreeSweeper --audit /path/to/repo
