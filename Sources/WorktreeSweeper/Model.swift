@@ -22,13 +22,16 @@ final class SweeperModel: ObservableObject {
   @Published var isLoading = false
   @Published var errorMessage: String?
   @Published var pending: PendingAction?
+  @Published var scannedAt: Date?
+  @Published var rescanNeeded = false
+  static let maxScanAge: TimeInterval = 20 * 60
   @Published var worktreeSelection: Worktree.ID?
   @Published var branchSelection: LocalBranch.ID?
   @Published var stashSelection: Stash.ID?
   @Published var worktreeSort = [KeyPathComparator(\Worktree.verdict), KeyPathComparator(\Worktree.status.lastCommitDate)]
   @Published var branchSort = [KeyPathComparator(\LocalBranch.verdict), KeyPathComparator(\LocalBranch.status.lastCommitDate)]
   @Published var stashSort = [KeyPathComparator(\Stash.verdict), KeyPathComparator(\Stash.date)]
-  let hasSourcetree = Shell.run("which", ["stree"]).ok
+  let openTargets = OpenTarget.detectAll()
 
   private var auditor: Auditor?
   private var loaded: Set<Tab> = []
@@ -41,39 +44,65 @@ final class SweeperModel: ObservableObject {
 
   // MARK: Loading
 
-  func refresh() {
+  func rescan() {
     auditor = nil
     loaded = []
     load(tab)
   }
 
+  
   private func load(_ tab: Tab) {
     let repo = (repoPath as NSString).expandingTildeInPath
     let existing = auditor
     isLoading = true
     errorMessage = nil
     Task.detached {
+      let foundWorktrees = Auditor.discoverWorktrees(repo: repo)
+      await MainActor.run {
+        self.worktrees = foundWorktrees
+        if foundWorktrees.isEmpty { self.errorMessage = "No worktrees found at \(repo). Is it a git repo?" }
+      }
+      let foundBranches = Auditor.discoverBranches(repo: repo, worktrees: foundWorktrees)
+      let foundStashes = Auditor.discoverStashes(repo: repo)
+      await MainActor.run {
+        if existing == nil || tab == .branches { self.branches = foundBranches }
+        if existing == nil || tab == .stashes { self.stashes = foundStashes }
+      }
+
       let auditor = existing ?? Auditor(repo: repo)
-      let worktrees = await Auditor.auditAll(auditor.discoverWorktrees()) { auditor.audit($0) }
       await MainActor.run {
         self.auditor = auditor
-        self.worktrees = worktrees.sorted(using: self.worktreeSort)
-        self.loaded.insert(.worktrees)
-        if worktrees.isEmpty { self.errorMessage = "No worktrees found at \(repo). Is it a git repo?" }
+        if existing == nil { self.scannedAt = Date() }
       }
-      switch tab {
-      case .worktrees:
-        break
-      case .branches:
-        let branches = await Auditor.auditAll(auditor.discoverBranches(worktrees: worktrees)) { auditor.audit($0) }
-        await MainActor.run { self.branches = branches.sorted(using: self.branchSort); self.loaded.insert(.branches) }
-      case .stashes:
-        let stashes = await Auditor.auditAll(auditor.discoverStashes()) { auditor.audit($0) }
-        await MainActor.run { self.stashes = stashes.sorted(using: self.stashSort); self.loaded.insert(.stashes) }
+      await self.fill(foundWorktrees, sortedBy: self.worktreeSort, audit: { auditor.audit($0) }) { self.worktrees = $0 }
+      await MainActor.run { self.loaded.formUnion([.worktrees]) }
+      if tab == .branches {
+        await self.fill(foundBranches, sortedBy: self.branchSort, audit: { auditor.audit($0) }) { self.branches = $0 }
+        await MainActor.run { self.loaded.formUnion([.branches]) }
+      }
+      if tab == .stashes {
+        await self.fill(foundStashes, sortedBy: self.stashSort, audit: { auditor.audit($0) }) { self.stashes = $0 }
+        await MainActor.run { self.loaded.formUnion([.stashes]) }
       }
       await MainActor.run { self.isLoading = false }
-      if existing == nil { await self.measureDiskUsage(worktrees.filter(\.exists).map(\.path)) }
+      if existing == nil { await self.measureDiskUsage(foundWorktrees.filter(\.exists).map(\.path)) }
     }
+  }
+
+  private func fill<T: Identifiable & Sendable>(_ items: [T], sortedBy sort: [KeyPathComparator<T>],
+                                                audit: @escaping @Sendable (T) -> T, update: @MainActor ([T]) -> Void) async {
+    var rows = items
+    await withTaskGroup(of: T.self) { group in
+      for item in items { group.addTask { audit(item) } }
+      for await audited in group {
+        if let index = rows.firstIndex(where: { $0.id == audited.id }) {
+          rows[index] = audited
+          update(rows)
+        }
+      }
+    }
+    rows.sort(using: sort)
+    update(rows)
   }
 
   private func measureDiskUsage(_ paths: [String]) async {
@@ -96,15 +125,19 @@ final class SweeperModel: ObservableObject {
     panel.directoryURL = URL(fileURLWithPath: (repoPath as NSString).expandingTildeInPath)
     guard panel.runModal() == .OK, let url = panel.url else { return }
     repoPath = url.path.replacingOccurrences(of: NSHomeDirectory(), with: "~")
-    refresh()
+    rescan()
   }
 
-  func openInSourcetree(_ path: String) {
-    Task.detached { _ = Shell.run("stree", [path]) }
+  private var scanIsFresh: Bool {
+    guard let scannedAt, Date().timeIntervalSince(scannedAt) <= Self.maxScanAge else {
+      rescanNeeded = true
+      return false
+    }
+    return true
   }
 
   func remove(_ w: Worktree) {
-    guard let auditor else { return }
+    guard scanIsFresh, let auditor else { return }
     let perform = { self.run({ auditor.remove(w) }) { self.worktrees.removeAll { $0.id == w.id }; self.branches.removeAll { $0.name == w.branch } } }
     if w.verdict.isSafeToClean { return perform() }
     var lines = lossLines(w.status)
@@ -115,7 +148,7 @@ final class SweeperModel: ObservableObject {
   }
 
   func delete(_ b: LocalBranch) {
-    guard let auditor else { return }
+    guard scanIsFresh, let auditor else { return }
     let perform = { self.run({ auditor.delete(b) }) { self.branches.removeAll { $0.id == b.id } } }
     if b.verdict.isSafeToClean { return perform() }
     let lines = lossLines(b.status)
@@ -124,7 +157,7 @@ final class SweeperModel: ObservableObject {
   }
 
   func drop(_ s: Stash) {
-    guard let auditor else { return }
+    guard scanIsFresh, let auditor else { return }
     pending = PendingAction(title: "Drop this stash?",
                             message: "\(s.message)\n\(s.fileCount) file(s) from \(s.date.shortDisplay). Dropping a stash cannot be undone from the app.",
                             buttonLabel: "Drop stash") {
@@ -150,7 +183,7 @@ final class SweeperModel: ObservableObject {
           self.isLoading = false
         } else {
           self.errorMessage = result.stderr
-          self.refresh()
+          self.rescan()
         }
       }
     }

@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 enum Verdict: String, Comparable, CaseIterable {
@@ -84,6 +85,7 @@ struct Worktree: Identifiable {
   var status = BranchStatus()
   var verdict: Verdict = .active
   var notes: [String] = []
+  var audited = false
 
   var id: String { path }
   var name: String { (path as NSString).lastPathComponent }
@@ -104,6 +106,7 @@ struct LocalBranch: Identifiable {
   var status = BranchStatus()
   var verdict: Verdict = .active
   var notes: [String] = []
+  var audited = false
 
   var id: String { name }
 }
@@ -118,7 +121,27 @@ struct Stash: Identifiable {
   var fileCount = 0
   var verdict: Verdict = .active
   var notes: [String] = []
+  var audited = false
 
   var id: String { sha }
   var isLintStagedBackup: Bool { message.hasPrefix("lint-staged automatic backup") }
+}
+
+struct OpenTarget: Identifiable {
+  let name: String
+  let open: (String) -> Void
+  var id: String { name }
+
+  static let finder = OpenTarget(name: "Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: $0)]) }
+
+  static func app(_ name: String) -> OpenTarget? {
+    let installed = ["/Applications", NSHomeDirectory() + "/Applications"].contains { FileManager.default.fileExists(atPath: "\($0)/\(name).app") }
+    guard installed else { return nil }
+    return OpenTarget(name: name) { path in Task.detached { _ = Shell.run("open", ["-a", name, path]) } }
+  }
+
+  static func detectAll() -> [OpenTarget] {
+    let apps = ["Terminal", "iTerm", "Warp", "Ghostty", "Visual Studio Code", "Cursor", "Zed", "Sourcetree", "Fork", "Tower", "GitHub Desktop"]
+    return [finder] + apps.compactMap(app)
+  }
 }

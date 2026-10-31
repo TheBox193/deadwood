@@ -2,7 +2,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 NAME="Worktree Sweeper"
-APP="$NAME.app"
+APP="dist/$NAME.app"
 
 swift build -c release
 rm -rf "$APP"

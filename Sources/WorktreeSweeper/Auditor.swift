@@ -35,8 +35,6 @@ final class PullRequestCache: @unchecked Sendable {
 
 struct Auditor: Sendable {
   static let ignoredDirtyPaths: Set<String> = [".vscode/settings.json"]
-  static let staleAfterDays = 14
-  static let staleStashAfterDays = 30
 
   let repo: String
   let baseRef: String
@@ -77,7 +75,7 @@ struct Auditor: Sendable {
 
   // MARK: Discovery
 
-  func discoverWorktrees() -> [Worktree] {
+  static func discoverWorktrees(repo: String) -> [Worktree] {
     var result: [Worktree] = []
     var path = "", head = "", branch: String?, prunable = false
     let flush = {
@@ -95,7 +93,7 @@ struct Auditor: Sendable {
     return result
   }
 
-  func discoverBranches(worktrees: [Worktree]) -> [LocalBranch] {
+  static func discoverBranches(repo: String, worktrees: [Worktree]) -> [LocalBranch] {
     let checkedOut = Dictionary(worktrees.compactMap { w in w.branch.map { ($0, w.path) } }, uniquingKeysWith: { a, _ in a })
     return Shell.git(["for-each-ref", "refs/heads", "--format=%(refname:short)|%(objectname)|%(upstream:track)"], in: repo).lines.compactMap { line in
       let parts = line.components(separatedBy: "|")
@@ -106,7 +104,7 @@ struct Auditor: Sendable {
     }
   }
 
-  func discoverStashes() -> [Stash] {
+  static func discoverStashes(repo: String) -> [Stash] {
     Shell.git(["stash", "list", "--format=%H|%ct|%gs"], in: repo).lines.compactMap { line in
       let parts = line.components(separatedBy: "|")
       guard parts.count >= 3, let date = Date(unixSeconds: parts[1]) else { return nil }
@@ -142,14 +140,9 @@ struct Auditor: Sendable {
     if !w.dirtyFiles.isEmpty { w.notes.append("\(w.dirtyFiles.count) uncommitted") }
     w.notes += statusNotes(w.status)
 
-    w.verdict = {
-      if w.isMainCheckout { return .main }
-      if !w.exists || w.markedPrunable { return .prunable }
-      if !w.usedBy.isEmpty { return .inUse }
-      if let v = mergedVerdict(w.status, hasLeftovers: !w.dirtyFiles.isEmpty || !w.status.stashes.isEmpty) { return v }
-      if w.status.fullyMerged { return w.dirtyFiles.isEmpty ? .nearDead : .active }
-      return w.status.lastCommitDate.daysAgo > Self.staleAfterDays ? .stale : .active
-    }()
+    w.verdict = Judge.worktree(isMainCheckout: w.isMainCheckout, exists: w.exists, markedPrunable: w.markedPrunable,
+                               inUse: !w.usedBy.isEmpty, dirty: !w.dirtyFiles.isEmpty, status: w.status)
+    w.audited = true
     return w
   }
 
@@ -162,13 +155,8 @@ struct Auditor: Sendable {
     if let path = b.worktreePath { b.notes.append("checked out at \((path as NSString).lastPathComponent)") }
     b.notes += statusNotes(b.status)
 
-    b.verdict = {
-      if b.name == baseBranch { return .main }
-      if b.worktreePath != nil { return .inUse }
-      if let v = mergedVerdict(b.status, hasLeftovers: !b.status.stashes.isEmpty) { return v }
-      if b.status.fullyMerged { return .nearDead }
-      return b.status.lastCommitDate.daysAgo > Self.staleAfterDays ? .stale : .active
-    }()
+    b.verdict = Judge.branch(isBaseBranch: b.name == baseBranch, checkedOut: b.worktreePath != nil, status: b.status)
+    b.audited = true
     return b
   }
 
@@ -184,11 +172,8 @@ struct Auditor: Sendable {
     if s.isLintStagedBackup { s.notes.append("lint-staged backup") }
     s.notes.append("\(s.fileCount) file\(s.fileCount == 1 ? "" : "s")")
 
-    s.verdict = {
-      if s.isLintStagedBackup { return .dead }
-      if s.branch != nil && !s.branchExists { return .nearDead }
-      return s.date.daysAgo > Self.staleStashAfterDays ? .stale : .active
-    }()
+    s.verdict = Judge.stash(isLintStagedBackup: s.isLintStagedBackup, branchDeleted: s.branch != nil && !s.branchExists, date: s.date)
+    s.audited = true
     return s
   }
 
@@ -232,13 +217,6 @@ struct Auditor: Sendable {
     if s.remoteGone { notes.append("remote deleted") }
     else if !s.localLabel.isEmpty && !s.hasRemoteBranch && !s.fullyMerged { notes.append("not pushed") }
     return notes
-  }
-
-  private func mergedVerdict(_ s: BranchStatus, hasLeftovers: Bool) -> Verdict? {
-    if s.pullRequest?.isOpen == true { return .active }
-    if s.fullyMerged && !hasLeftovers { return .dead }
-    if s.pullRequest?.isMerged == true { return .nearDead }
-    return nil
   }
 
   // MARK: Actions

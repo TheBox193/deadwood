@@ -8,10 +8,10 @@ struct ContentView: View {
       HStack {
         TextField("Repository path", text: $model.repoPath)
           .textFieldStyle(.roundedBorder)
-          .onSubmit(model.refresh)
+          .onSubmit(model.rescan)
         Button("Browse…", action: model.browse)
-        Button(action: model.refresh) { Image(systemName: "arrow.clockwise") }
-          .help("Refresh")
+        Button(action: model.rescan) { Image(systemName: "arrow.clockwise") }
+          .help("Rescan")
           .disabled(model.isLoading)
         ProgressView().controlSize(.small).opacity(model.isLoading ? 1 : 0)
       }
@@ -27,8 +27,13 @@ struct ContentView: View {
       HStack {
         if let error = model.errorMessage { Text(error).foregroundStyle(.red) }
         Spacer()
+        if let scannedAt = model.scannedAt {
+          Text("Scanned \(scannedAt.formatted(date: .omitted, time: .shortened))")
+            .foregroundStyle(.secondary)
+            .help("Deleting after 20 minutes asks for a rescan first")
+        }
         if let total = model.totalDiskDisplay {
-          Text("\(model.worktrees.count) worktrees · \(total) on disk")
+          Text("· \(model.worktrees.count) worktrees · \(total) on disk")
             .foregroundStyle(.secondary)
             .help("Sum of du -sk over every worktree folder")
         }
@@ -37,7 +42,13 @@ struct ContentView: View {
       .padding(.horizontal)
       .padding(.vertical, 8)
     }
-    .onAppear(perform: model.refresh)
+    .onAppear(perform: model.rescan)
+    .alert("Rescan needed", isPresented: $model.rescanNeeded) {
+      Button("Rescan") { model.rescan() }
+      Button("Cancel", role: .cancel) {}
+    } message: {
+      Text("This scan is more than 20 minutes old, so what it shows may no longer be true. Rescan before deleting anything.")
+    }
     .confirmationDialog(model.pending?.title ?? "", isPresented: Binding(get: { model.pending != nil }, set: { if !$0 { model.pending = nil } }), presenting: model.pending) { action in
       Button(action.buttonLabel, role: .destructive, action: action.perform)
       Button("Cancel", role: .cancel) {}
@@ -56,23 +67,31 @@ struct WorktreesTable: View {
     Table(model.worktrees, selection: $model.worktreeSelection, sortOrder: $model.worktreeSort) {
       TableColumn("Worktree", value: \.name) { w in Text(w.name).help(w.path) }
       TableColumn("Branch", value: \.branchLabel)
-      TableColumn("Verdict", value: \.verdict) { w in VerdictBadge(verdict: w.verdict) }.width(90)
+      TableColumn("Verdict", value: \.verdict) { w in VerdictBadge(verdict: w.verdict, pending: !w.audited) }.width(90)
       TableColumn("PR", value: \.status.mergedRank) { w in StatusIcon(status: w.status) }.width(50)
-      TableColumn("Last commit", value: \.status.lastCommitDate) { w in Text(w.status.lastCommitDate.shortDisplay) }.width(80)
+      TableColumn("Last commit", value: \.status.lastCommitDate) { w in Text(w.audited ? w.status.lastCommitDate.shortDisplay : "") }.width(80)
       TableColumn("Size", value: \.diskSortKey) { w in
         Text(w.diskDisplay).monospacedDigit().help("Actual blocks used (du -sk); symlinks are not followed")
       }.width(70)
       TableColumn("Notes") { w in NotesText(w.notes) }
       TableColumn("") { w in
-        HStack {
-          if model.hasSourcetree && w.exists {
-            Button("Sourcetree") { model.openInSourcetree(w.path) }.buttonStyle(.bordered)
+        HStack(spacing: 4) {
+          if w.exists {
+            Menu {
+              ForEach(model.openTargets) { target in Button(target.name) { target.open(w.path) } }
+            } label: {
+              Image(systemName: "arrow.up.forward.app")
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("Open in…")
           }
-          if w.verdict.canClean {
+          if w.audited && w.verdict.canClean {
             TrashButton(help: "Remove worktree and delete its branch") { model.remove(w) }
           }
         }
-      }.width(model.hasSourcetree ? 130 : 40)
+      }.width(70)
     }
     .onChange(of: model.worktreeSort) { _, order in model.worktrees.sort(using: order) }
     .contextMenu(forSelectionType: Worktree.ID.self) { ids in
@@ -92,12 +111,12 @@ struct BranchesTable: View {
   var body: some View {
     Table(model.branches, selection: $model.branchSelection, sortOrder: $model.branchSort) {
       TableColumn("Branch", value: \.name)
-      TableColumn("Verdict", value: \.verdict) { b in VerdictBadge(verdict: b.verdict) }.width(90)
+      TableColumn("Verdict", value: \.verdict) { b in VerdictBadge(verdict: b.verdict, pending: !b.audited) }.width(90)
       TableColumn("PR", value: \.status.mergedRank) { b in StatusIcon(status: b.status) }.width(50)
-      TableColumn("Last commit", value: \.status.lastCommitDate) { b in Text(b.status.lastCommitDate.shortDisplay) }.width(80)
+      TableColumn("Last commit", value: \.status.lastCommitDate) { b in Text(b.audited ? b.status.lastCommitDate.shortDisplay : "") }.width(80)
       TableColumn("Notes") { b in NotesText(b.notes) }
       TableColumn("") { b in
-        if b.verdict.canClean && b.worktreePath == nil {
+        if b.audited && b.verdict.canClean && b.worktreePath == nil {
           TrashButton(help: "Delete branch") { model.delete(b) }
         }
       }.width(40)
@@ -119,10 +138,12 @@ struct StashesTable: View {
     Table(model.stashes, selection: $model.stashSelection, sortOrder: $model.stashSort) {
       TableColumn("Stash", value: \.message) { s in Text(s.message).help(s.sha) }
       TableColumn("Branch") { s in Text(s.branch ?? "") }
-      TableColumn("Verdict", value: \.verdict) { s in VerdictBadge(verdict: s.verdict) }.width(90)
+      TableColumn("Verdict", value: \.verdict) { s in VerdictBadge(verdict: s.verdict, pending: !s.audited) }.width(90)
       TableColumn("Date", value: \.date) { s in Text(s.date.shortDisplay) }.width(80)
       TableColumn("Notes") { s in NotesText(s.notes) }
-      TableColumn("") { s in TrashButton(help: "Drop stash") { model.drop(s) } }.width(40)
+      TableColumn("") { s in
+        if s.audited { TrashButton(help: "Drop stash") { model.drop(s) } }
+      }.width(40)
     }
     .onChange(of: model.stashSort) { _, order in model.stashes.sort(using: order) }
     .contextMenu(forSelectionType: Stash.ID.self) { ids in
@@ -211,8 +232,17 @@ struct StatusIcon: View {
 
 struct VerdictBadge: View {
   let verdict: Verdict
+  var pending = false
 
   var body: some View {
+    if pending {
+      ProgressView().controlSize(.mini)
+    } else {
+      badge
+    }
+  }
+
+  private var badge: some View {
     Text(verdict.rawValue)
       .font(.caption.weight(.semibold))
       .padding(.horizontal, 6).padding(.vertical, 2)

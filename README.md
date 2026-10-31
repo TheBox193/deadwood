@@ -14,7 +14,7 @@ Print the same audit as text without opening a window:
 swift run WorktreeSweeper --audit /path/to/repo
 ```
 
-Build a double-clickable app (`Worktree Sweeper.app`, ad-hoc signed):
+Build a double-clickable app (`dist/Worktree Sweeper.app`, ad-hoc signed):
 
 ```bash
 ./make-app.sh
@@ -22,13 +22,20 @@ Build a double-clickable app (`Worktree Sweeper.app`, ad-hoc signed):
 
 Drop an `icon.icns` next to `make-app.sh` to give it an icon.
 
+Run the verdict tests:
+
+```bash
+swift test
+```
+
 ## Layout
 
 | File              | Holds                                                                 |
 |-------------------|-----------------------------------------------------------------------|
 | `Shell.swift`     | Runs `git`, `gh`, `lsof`, `du` and returns their output                |
 | `Models.swift`    | `Verdict`, `PullRequest`, `BranchStatus`, `Worktree`, `LocalBranch`, `Stash`, date helpers |
-| `Auditor.swift`   | Discovers items, gathers facts, decides verdicts, performs removals    |
+| `Auditor.swift`   | Discovers items, gathers facts, performs removals                      |
+| `Judge.swift`     | Pure verdict rules, covered by `Tests/JudgeTests.swift`                |
 | `Model.swift`     | `SweeperModel`: per-tab loading, disk sizes, confirmations             |
 | `Views.swift`     | The window, three tables, status icon and badge                        |
 | `App.swift`       | Entry point, About panel, `--audit` text mode                          |
@@ -36,6 +43,8 @@ Drop an `icon.icns` next to `make-app.sh` to give it an icon.
 ## What it checks
 
 Each refresh runs `git fetch --prune` first. Pull requests come from one bulk `gh pr list` of the last 1000, with a per-branch lookup for anything older.
+
+Rows appear as soon as `git` lists them; verdicts stream in once the auditor has fetched, listed processes and loaded pull requests.
 
 Per branch or worktree:
 
