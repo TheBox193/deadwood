@@ -7,7 +7,6 @@ enum Verdict: String, Comparable, CaseIterable {
   case nearDead = "Near-dead"
   case stale = "Stale"
   case inUse = "In use"
-  case new = "New"
   case active = "Active"
   case main = "Main"
 

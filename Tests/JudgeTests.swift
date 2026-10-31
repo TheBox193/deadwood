@@ -55,12 +55,18 @@ private func worktree(status s: BranchStatus, exists: Bool = true, prunable: Boo
   #expect(Judge.branch(isBaseBranch: false, checkedOut: false, status: status(pr: pr("MERGED"), stashes: ["On b: wip"])) == .dead)
 }
 
-@Test func folderCreatedTodayIsNewUnlessInUseOrMissing() {
-  #expect(worktree(status: status(inBase: true), createdAt: today) == .new)
-  #expect(worktree(status: status(pr: pr("MERGED")), createdAt: today, dirty: true) == .new)
+@Test func emptyFolderAddedTodayIsActiveUnlessInUseOrMissing() {
+  #expect(worktree(status: status(inBase: true), createdAt: today) == .active)
+  #expect(worktree(status: status(inBase: true), createdAt: today, dirty: true) == .active)
   #expect(worktree(status: status(inBase: true), inUse: true, createdAt: today) == .inUse)
   #expect(worktree(status: status(inBase: true), exists: false, createdAt: today) == .prunable)
   #expect(worktree(status: status(inBase: true), createdAt: nil) == .dead)
+}
+
+@Test func freshFolderOnABranchWithItsOwnCommitsFollowsTheNormalRules() {
+  #expect(worktree(status: status(), createdAt: today) == .active)
+  #expect(worktree(status: status(date: lastMonth), createdAt: today) == .stale)
+  #expect(worktree(status: status(pr: pr("MERGED")), createdAt: today, dirty: true) == .nearDead)
 }
 
 @Test func processInFolderBeatsMerged() {
@@ -104,5 +110,5 @@ private func worktree(status s: BranchStatus, exists: Bool = true, prunable: Boo
 }
 
 @Test func verdictsSortWorstFirst() {
-  #expect(Verdict.prunable < .dead && .dead < .nearDead && .nearDead < .stale && .stale < .inUse && .inUse < .new && .new < .active && .active < .main)
+  #expect(Verdict.prunable < .dead && .dead < .nearDead && .nearDead < .stale && .stale < .inUse && .inUse < .active && .active < .main)
 }

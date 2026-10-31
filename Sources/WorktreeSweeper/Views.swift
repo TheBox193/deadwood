@@ -87,7 +87,7 @@ struct WorktreesTable: View {
       TableColumn("Branch", value: \.branchLabel)
       TableColumn("Verdict", value: \.verdict) { w in VerdictBadge(verdict: w.verdict, pending: !w.audited) }.width(90)
       TableColumn("PR", value: \.status.mergedRank) { w in StatusIcon(status: w.status) }.width(50)
-      TableColumn("Created", value: \.created) { w in Text(w.created.shortDisplay).help("Folder creation time") }.width(80)
+      TableColumn("Added", value: \.created) { w in Text(w.created.shortDisplay).help("When the worktree folder was created") }.width(80)
       TableColumn("Last commit", value: \.status.lastCommitDate) { w in Text(w.status.lastCommitDate.shortDisplay) }.width(80)
       TableColumn("Size", value: \.diskSortKey) { w in
         Text(w.diskDisplay).monospacedDigit().help("Actual blocks used (du -sk); symlinks are not followed")
@@ -285,7 +285,6 @@ struct VerdictBadge: View {
     case .nearDead: .orange
     case .stale: .yellow
     case .inUse: .blue
-    case .new: .mint
     case .active: .green
     case .main: .gray
     }
@@ -293,7 +292,7 @@ struct VerdictBadge: View {
 
   private var text: Color {
     switch verdict {
-    case .stale, .new: .black.opacity(0.75)
+    case .stale: .black.opacity(0.75)
     default: .white
     }
   }

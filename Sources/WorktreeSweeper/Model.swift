@@ -175,7 +175,7 @@ final class SweeperModel: ObservableObject {
     }
     if safe { return perform() }
     var lines = lossLines(w.status)
-    if w.verdict == .new { lines.insert("Created \(w.created.shortDisplay), less than a day ago.", at: 0) }
+    if Judge.justAdded(w.createdAt, status: w.status) { lines.insert("Folder added \(w.created.shortDisplay), less than a day ago, and nothing committed on it yet.", at: 0) }
     if !w.usedBy.isEmpty { lines.insert("Processes are working in it: " + w.usedBy.joined(separator: ", "), at: 0) }
     if !w.dirtyFiles.isEmpty { lines.insert("Uncommitted: " + w.dirtyFiles.prefix(5).joined(separator: ", ") + (w.dirtyFiles.count > 5 ? ", …" : ""), at: 0) }
     pending = PendingAction(title: "Remove \(w.name)?", message: lines.isEmpty ? "This worktree is not marked safe." : lines.joined(separator: "\n"),

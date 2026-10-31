@@ -58,7 +58,7 @@ Per worktree, additionally:
 - Uncommitted files, ignoring `.vscode/settings.json` (edit `Auditor.ignoredDirtyPaths`)
 - Processes whose working directory is inside it, from `lsof`
 - Whether the folder still exists or git marks the entry prunable
-- Folder creation time, shown as Created and the default sort
+- Folder creation time, shown as Added and the default sort
 - Disk usage from `du -sk`, loaded after the table appears
 
 Per stash: the branch it was made on and whether that branch still exists, file count, and whether it is a lint-staged automatic backup.
@@ -72,8 +72,7 @@ Per stash: the branch it was made on and whether that branch still exists, file 
 | Near-dead | Merged but with uncommitted files, or has commits the merged PR did not | Its branch no longer exists | confirm   |
 | Stale     | Unmerged and no activity for 14 days                                 | Older than 30 days          | confirm      |
 | In use    | A process is working in the worktree, or the branch is checked out   |                             | confirm      |
-| New       | Worktree folder created in the last 24 hours                         |                             | confirm      |
-| Active    | Open PR, uncommitted work, or recent unmerged commits                | Recent                      | confirm      |
+| Active    | Open PR, uncommitted work, recent unmerged commits, or a folder added in the last day with no commits of its own | Recent | confirm |
 | Main      | The primary checkout or default branch                               |                             | never        |
 
 Removing a Dead worktree runs plain `git worktree remove` so git's own cleanliness check is a second guard; anything confirmed through the dialog uses `--force`. The branch is then deleted with `git branch -d` when git can see the merge in history, or `-D` for squash merges and confirmed deletes. Dropping a stash always asks first and locates the stash by SHA at that moment.
