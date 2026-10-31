@@ -104,6 +104,12 @@ struct GitAuditor: RepoAuditor {
     return s
   }
 
+  func preview(_ stash: Stash) async -> StashPreview {
+    async let numstat = Shell.git(["diff", "--numstat", "\(stash.sha)^1", stash.sha], in: repo)
+    async let diff = Shell.git(["diff", "\(stash.sha)^1", stash.sha], in: repo)
+    return StashPreview(sha: stash.sha, files: GitScanner.parseNumstat(await numstat.lines), diff: await diff.stdout)
+  }
+
   private func branchStatus(head: String, branch: String?, lastCommitDate: Date) async -> BranchStatus {
     var s = BranchStatus()
     s.head = head

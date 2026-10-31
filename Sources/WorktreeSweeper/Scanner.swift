@@ -13,6 +13,7 @@ protocol RepoAuditor: Sendable {
   func audit(_ worktree: Worktree) async -> Worktree
   func audit(_ branch: LocalBranch) async -> LocalBranch
   func audit(_ stash: Stash) async -> Stash
+  func preview(_ stash: Stash) async -> StashPreview
   func remove(_ worktree: Worktree, force: Bool) async -> ShellResult
   func delete(_ branch: LocalBranch, force: Bool) async -> ShellResult
   func drop(_ stash: Stash) async -> ShellResult

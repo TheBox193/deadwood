@@ -140,6 +140,20 @@ struct Stash: Identifiable, Sendable {
   var isLintStagedBackup: Bool { message.hasPrefix("lint-staged automatic backup") }
 }
 
+struct StashPreview: Sendable, Equatable {
+  struct File: Sendable, Equatable, Identifiable {
+    let path: String
+    let added: Int?
+    let removed: Int?
+    var id: String { path }
+    var isBinary: Bool { added == nil }
+  }
+
+  let sha: String
+  let files: [File]
+  let diff: String
+}
+
 struct OpenTarget: Identifiable {
   let name: String
   let open: (String) -> Void

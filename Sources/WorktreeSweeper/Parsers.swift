@@ -56,6 +56,14 @@ extension GitScanner {
     return nil
   }
 
+  static func parseNumstat(_ lines: [String]) -> [StashPreview.File] {
+    lines.compactMap { line in
+      let parts = line.split(separator: "\t", maxSplits: 2, omittingEmptySubsequences: false)
+      guard parts.count == 3 else { return nil }
+      return StashPreview.File(path: String(parts[2]), added: Int(parts[0]), removed: Int(parts[1]))
+    }
+  }
+
   static func parseProcessCwds(_ lsofLines: [String]) -> [(command: String, path: String)] {
     var result: [(String, String)] = []
     var command = ""

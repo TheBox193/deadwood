@@ -57,6 +57,11 @@ actor FakeAuditor: RepoAuditor {
     return s
   }
 
+  func preview(_ stash: Stash) async -> StashPreview {
+    await gate.wait()
+    return StashPreview(sha: stash.sha, files: [StashPreview.File(path: "a.swift", added: 1, removed: 2)], diff: "+x\n-y")
+  }
+
   func remove(_ worktree: Worktree, force: Bool) async -> ShellResult { actions.append("remove \(worktree.name) force=\(force)"); return actionResult }
   func delete(_ branch: LocalBranch, force: Bool) async -> ShellResult { actions.append("delete \(branch.name) force=\(force)"); return actionResult }
   func drop(_ stash: Stash) async -> ShellResult { actions.append("drop \(stash.sha)"); return actionResult }
@@ -217,4 +222,23 @@ private func waitUntil(_ condition: @MainActor () -> Bool, sourceLocation: Sourc
   #expect(first.repoPath == SweeperModel.defaultRepo)
   first.repoPath = "~/Code/other"
   #expect(makeModel(FakeAuditor(), defaults: defaults).repoPath == "~/Code/other")
+}
+
+@MainActor @Test func selectingAStashLoadsItsPreviewAndDroppingClearsIt() async {
+  let auditor = FakeAuditor()
+  let model = makeModel(auditor)
+  model.rescan()
+  await waitUntil { model.scannedAt != nil }
+  model.tab = .stashes
+
+  model.stashSelection = "ddd"
+  await waitUntil { model.stashPreview?.sha == "ddd" }
+  #expect(model.stashPreview?.files.map(\.path) == ["a.swift"])
+
+  model.drop(model.selectedStash!)
+  model.pending?.perform()
+  await waitUntil { model.stashes.isEmpty }
+  #expect(model.stashSelection == nil)
+  #expect(model.stashPreview == nil)
+  #expect(await auditor.actions == ["drop ddd"])
 }

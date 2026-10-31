@@ -63,3 +63,10 @@ import Testing
   #expect(shellQuoted("it's \"wip\"") == "'it'\\''s \"wip\"'")
   #expect(shellQuoted("plain") == "'plain'")
 }
+
+@Test func numstatLinesKeepTabsInPathsAndMarkBinaries() {
+  let files = GitScanner.parseNumstat(["3\t1\tsrc/a.swift", "-\t-\timg/logo.png", "0\t0\tweird\tname.txt", "junk"])
+  #expect(files.map(\.path) == ["src/a.swift", "img/logo.png", "weird\tname.txt"])
+  #expect(files[0].added == 3 && files[0].removed == 1 && !files[0].isBinary)
+  #expect(files[1].isBinary)
+}

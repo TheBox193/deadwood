@@ -15,6 +15,10 @@ struct ContentView: View {
           .accessibilityLabel("Rescan")
           .disabled(model.isLoading)
         ProgressView().controlSize(.small).opacity(model.isLoading ? 1 : 0)
+        Button { model.showPreview.toggle() } label: { Image(systemName: "sidebar.trailing") }
+          .help("Show or hide the stash preview")
+          .accessibilityLabel("Toggle stash preview")
+          .disabled(model.tab != .stashes)
       }
       .padding()
 
@@ -25,6 +29,9 @@ struct ContentView: View {
       }
       .padding(.horizontal)
       .onDeleteCommand(perform: model.removeSelected)
+      .inspector(isPresented: Binding(get: { model.tab == .stashes && model.showPreview }, set: { model.showPreview = $0 })) {
+        StashPreviewPane(model: model).inspectorColumnWidth(min: 320, ideal: 440, max: 800)
+      }
 
       HStack(alignment: .firstTextBaseline) {
         VStack(alignment: .leading, spacing: 2) {
@@ -173,6 +180,103 @@ struct StashesTable: View {
         if let branch = s.branch { CopyButton("Copy branch name", branch) }
       }
     }
+  }
+}
+
+struct StashPreviewPane: View {
+  @ObservedObject var model: SweeperModel
+
+  var body: some View {
+    if let stash = model.selectedStash {
+      VStack(alignment: .leading, spacing: 8) {
+        Text(stash.message).font(.headline).textSelection(.enabled)
+        HStack(spacing: 8) {
+          Text(stash.branch ?? "no branch").lineLimit(1).truncationMode(.middle).help(stash.branch ?? "")
+          if stash.branch != nil && stash.audited && !stash.branchExists { Text("branch deleted").foregroundStyle(.orange) }
+          Text(stash.date.shortDisplay)
+          Text(stash.sha.prefix(7)).monospaced()
+        }
+        .font(.callout)
+        .foregroundStyle(.secondary)
+        if let preview = model.stashPreview, preview.sha == stash.sha {
+          HStack {
+            Button("Copy patch") { copyToClipboard(preview.diff) }
+            Button("Open patch") { openAsPatchFile(preview.diff, named: "stash-\(stash.sha.prefix(7))") }
+            Spacer()
+            Button("Drop…", role: .destructive) { model.drop(stash) }
+          }
+          .controlSize(.small)
+          Text("\(preview.files.count) file\(preview.files.count == 1 ? "" : "s")").font(.callout).foregroundStyle(.secondary)
+          FileStats(files: preview.files)
+          Divider()
+          DiffText(preview.diff)
+        } else {
+          ProgressView().controlSize(.small)
+          Spacer()
+        }
+      }
+      .padding()
+    } else {
+      Text("Select a stash").foregroundStyle(.secondary).frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+  }
+}
+
+struct FileStats: View {
+  static let rowHeight: CGFloat = 18
+  static let visibleRows = 8
+  let files: [StashPreview.File]
+
+  var body: some View {
+    ScrollView {
+      VStack(alignment: .leading, spacing: 0) {
+        ForEach(files) { file in
+          HStack(spacing: 6) {
+            Text(file.path).lineLimit(1).truncationMode(.middle).help(file.path)
+            Spacer()
+            if file.isBinary {
+              Text("binary").foregroundStyle(.secondary)
+            } else {
+              Text("+\(file.added ?? 0)").foregroundStyle(.green)
+              Text("−\(file.removed ?? 0)").foregroundStyle(.red)
+            }
+          }
+          .font(.system(.caption, design: .monospaced))
+          .frame(height: Self.rowHeight)
+        }
+      }
+    }
+    .frame(height: CGFloat(min(files.count, Self.visibleRows)) * Self.rowHeight)
+  }
+}
+
+struct DiffText: View {
+  static let maxLines = 3000
+  let lines: [Substring]
+
+  init(_ diff: String) { lines = diff.split(separator: "\n", omittingEmptySubsequences: false) }
+
+  var body: some View {
+    ScrollView([.horizontal, .vertical]) {
+      LazyVStack(alignment: .leading, spacing: 0) {
+        ForEach(Array(lines.prefix(Self.maxLines).enumerated()), id: \.offset) { _, line in
+          Text(line).foregroundStyle(color(line))
+        }
+        if lines.count > Self.maxLines {
+          Text("… \(lines.count - Self.maxLines) more lines, copy the patch to see them all").foregroundStyle(.secondary)
+        }
+      }
+      .font(.system(.caption, design: .monospaced))
+      .textSelection(.enabled)
+    }
+  }
+
+  private func color(_ line: Substring) -> Color {
+    if line.hasPrefix("+++") || line.hasPrefix("---") || line.hasPrefix("diff ") || line.hasPrefix("index ") { return .secondary }
+    if line.hasPrefix("+") { return .green }
+    if line.hasPrefix("-") { return .red }
+    if line.hasPrefix("@@") { return .blue }
+    return .primary
   }
 }
 

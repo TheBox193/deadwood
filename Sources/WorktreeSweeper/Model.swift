@@ -35,7 +35,9 @@ final class SweeperModel: ObservableObject {
   @Published var rescanNeeded = false
   @Published var worktreeSelection: Worktree.ID?
   @Published var branchSelection: LocalBranch.ID?
-  @Published var stashSelection: Stash.ID?
+  @Published var stashSelection: Stash.ID? { didSet { loadPreview() } }
+  @Published var showPreview = true
+  @Published private(set) var stashPreview: StashPreview?
   @Published var worktreeSort = [KeyPathComparator(\Worktree.created)]
   @Published var branchSort = [KeyPathComparator(\LocalBranch.status.lastCommitDate)]
   @Published var stashSort = [KeyPathComparator(\Stash.date)]
@@ -47,6 +49,7 @@ final class SweeperModel: ObservableObject {
   private var auditor: (any RepoAuditor)?
   private var loaded: Set<Tab> = []
   private var tasks: [Task<Void, Never>] = []
+  private var previewTask: Task<Void, Never>?
 
   init(scanner: any RepoScanner = GitScanner(), defaults: UserDefaults = .standard,
        openTargets: [OpenTarget] = OpenTarget.detectAll(), now: @escaping () -> Date = Date.init) {
@@ -58,6 +61,7 @@ final class SweeperModel: ObservableObject {
   }
 
   var isLoading: Bool { activeLoads > 0 }
+  var selectedStash: Stash? { stashes.first { $0.id == stashSelection } }
 
   var totalDiskDisplay: String? {
     let known = worktrees.compactMap(\.diskKB)
@@ -99,6 +103,7 @@ final class SweeperModel: ObservableObject {
       scannedAt = now()
       warnings = auditor.warnings
       load(tab)
+      loadPreview()
       await measureDiskUsage(foundWorktrees.filter(\.exists).map(\.path))
     })
   }
@@ -135,6 +140,17 @@ final class SweeperModel: ObservableObject {
     }
     guard !Task.isCancelled else { return }
     self[keyPath: rows].sort(using: sort)
+  }
+
+  private func loadPreview() {
+    previewTask?.cancel()
+    stashPreview = nil
+    guard let auditor, let stash = selectedStash else { return }
+    previewTask = Task {
+      let preview = await auditor.preview(stash)
+      guard !Task.isCancelled else { return }
+      stashPreview = preview
+    }
   }
 
   private func measureDiskUsage(_ paths: [String]) async {
@@ -218,6 +234,7 @@ final class SweeperModel: ObservableObject {
                             buttonLabel: "Drop stash") {
       self.run({ await auditor.drop(s) }) {
         self.stashes.removeAll { $0.id == s.id }
+        self.stashSelection = nil
         self.recovery = Recovery(message: "Dropped stash \(s.sha.prefix(7))", command: "git stash store -m \(shellQuoted(s.message)) \(s.sha)")
       }
     }
@@ -245,6 +262,12 @@ final class SweeperModel: ObservableObject {
       loaded = [tab]
     })
   }
+}
+
+func openAsPatchFile(_ diff: String, named name: String) {
+  let url = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("\(name).patch")
+  guard (try? diff.write(to: url, atomically: true, encoding: .utf8)) != nil else { return }
+  NSWorkspace.shared.open(url)
 }
 
 func copyToClipboard(_ text: String) {

@@ -67,6 +67,8 @@ Per worktree, additionally:
 
 Per stash: the branch it was made on and whether that branch still exists, file count, and whether it is a lint-staged automatic backup.
 
+Selecting a stash opens a preview pane on the right with each file's added and removed line counts and the full diff (`git diff <sha>^1 <sha>`, so untracked files stashed with `-u` are not shown). It has Copy patch, Open patch (writes a `.patch` to the temp folder and opens it with its default app) and Drop buttons. The sidebar button next to Rescan hides it.
+
 ## Verdicts
 
 | Verdict   | Worktrees and branches                                              | Stashes                     | Trash button |
