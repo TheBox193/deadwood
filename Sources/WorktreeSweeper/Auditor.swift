@@ -2,6 +2,7 @@ import Foundation
 
 actor PullRequestCache {
   private var byBranch: [String: [PullRequest]]
+  private let bySha: [String: PullRequest]
   private var inFlight: [String: Task<[PullRequest], Never>] = [:]
   private let repo: String
   let failure: String?
@@ -15,7 +16,10 @@ actor PullRequestCache {
     self.repo = repo
     self.failure = failure
     byBranch = Dictionary(grouping: prs, by: \.branch)
+    bySha = Dictionary(prs.map { ($0.headSha, $0) }, uniquingKeysWith: { a, b in Self.pick([a, b]) ?? a })
   }
+
+  func lookup(sha: String) -> PullRequest? { bySha[sha] }
 
   func lookup(branch: String) async -> PullRequest? {
     if let cached = byBranch[branch] { return Self.pick(cached) }
@@ -45,14 +49,28 @@ actor PullRequestCache {
 actor FetchGate {
   private var last: Task<Void, Never>?
 
-  func fetch(_ args: [String], in repo: String) async {
+  func fetchPullRequestHead(_ number: Int, in repo: String) async {
     let previous = last
     let task = Task {
       await previous?.value
-      _ = await Shell.git(["fetch", "-q", "origin"] + args, in: repo)
+      _ = await Shell.git(["fetch", "-q", "--no-tags", "origin", "+refs/pull/\(number)/head:refs/sweeper/pull/\(number)"], in: repo)
     }
     last = task
     await task.value
+  }
+}
+
+/// Runs `transform` over `items` with at most `limit` in flight, handing each result to `onEach` as it lands.
+func mapConcurrently<T: Sendable, R: Sendable>(_ items: [T], limit: Int = 8, _ transform: @escaping @Sendable (T) async -> R,
+                                               onEach: (R) async -> Void) async {
+  await withTaskGroup(of: R.self) { group in
+    var next = 0
+    while next < min(limit, items.count) { group.addTask { [item = items[next]] in await transform(item) }; next += 1 }
+    for await result in group {
+      if Task.isCancelled { group.cancelAll(); return }
+      await onEach(result)
+      if next < items.count { group.addTask { [item = items[next]] in await transform(item) }; next += 1 }
+    }
   }
 }
 
@@ -92,12 +110,9 @@ struct Auditor: Sendable {
   }
 
   static func auditAll<T: Sendable>(_ items: [T], _ audit: @escaping @Sendable (T) async -> T) async -> [T] {
-    await withTaskGroup(of: T.self) { group in
-      for item in items { group.addTask { await audit(item) } }
-      var out: [T] = []
-      for await item in group { out.append(item) }
-      return out
-    }
+    var out: [T] = []
+    await mapConcurrently(items, audit) { out.append($0) }
+    return out
   }
 
   // MARK: Discovery
@@ -248,11 +263,16 @@ struct Auditor: Sendable {
     s.lastCommitDate = lastCommitDate
     s.ahead = Int(await Shell.git(["rev-list", "--count", "\(baseRef)..\(head)"], in: repo).stdout) ?? 0
     s.inBaseBranch = await Shell.git(["merge-base", "--is-ancestor", head, baseRef], in: repo).ok
-    guard let branch else { return s }
+    guard let branch else {
+      s.remoteName = await Shell.git(["branch", "-r", "--contains", head, "--format=%(refname:short)"], in: repo).lines.first
+      s.pullRequest = await pullRequests.lookup(sha: head)
+      return s
+    }
     s.localLabel = branch
-    s.hasRemoteBranch = await Shell.git(["rev-parse", "--verify", "-q", "origin/\(branch)"], in: repo).ok
+    if await Shell.git(["rev-parse", "--verify", "-q", "origin/\(branch)"], in: repo).ok { s.remoteName = "origin/\(branch)" }
     s.stashes = stashLines.filter { Self.stashBranch($0) == branch }
     s.pullRequest = await pullRequests.lookup(branch: branch)
+    if s.pullRequest == nil { s.pullRequest = await pullRequests.lookup(sha: head) }
     if let pr = s.pullRequest, pr.isMerged, pr.headSha != head {
       s.tipWithinMergedPR = await tipIsWithin(prHead: pr.headSha, prNumber: pr.number, tip: head)
     }
@@ -261,7 +281,7 @@ struct Auditor: Sendable {
 
   private func tipIsWithin(prHead: String, prNumber: Int, tip: String) async -> Bool {
     if await !Shell.git(["cat-file", "-e", prHead], in: repo).ok {
-      await fetchGate.fetch(["refs/pull/\(prNumber)/head"], in: repo)
+      await fetchGate.fetchPullRequestHead(prNumber, in: repo)
     }
     return await Shell.git(["merge-base", "--is-ancestor", tip, prHead], in: repo).ok
   }
@@ -280,7 +300,7 @@ struct Auditor: Sendable {
     if s.pullRequest?.isMerged == true && !s.fullyMerged { notes.append("commits beyond merged PR") }
     else if s.ahead > 0 && !s.fullyMerged { notes.append("\(s.ahead) ahead of \(baseRef)") }
     if s.remoteGone { notes.append("remote deleted") }
-    else if !s.localLabel.isEmpty && !s.hasRemoteBranch && !s.fullyMerged { notes.append("not pushed") }
+    else if s.remoteName == nil && !s.fullyMerged { notes.append("not pushed") }
     return notes
   }
 

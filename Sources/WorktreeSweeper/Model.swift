@@ -69,10 +69,15 @@ final class SweeperModel: ObservableObject {
     let repo = (repoPath as NSString).expandingTildeInPath
     track(Task {
       let foundWorktrees = await Auditor.discoverWorktrees(repo: repo)
+      guard !Task.isCancelled else { return }
       worktrees = foundWorktrees.sorted(using: worktreeSort)
       if foundWorktrees.isEmpty { errorMessage = "No worktrees found at \(repo). Is it a git repo?" }
-      branches = await Auditor.discoverBranches(repo: repo, worktrees: foundWorktrees).sorted(using: branchSort)
-      stashes = await Auditor.discoverStashes(repo: repo).sorted(using: stashSort)
+      let foundBranches = await Auditor.discoverBranches(repo: repo, worktrees: foundWorktrees)
+      guard !Task.isCancelled else { return }
+      branches = foundBranches.sorted(using: branchSort)
+      let foundStashes = await Auditor.discoverStashes(repo: repo)
+      guard !Task.isCancelled else { return }
+      stashes = foundStashes.sorted(using: stashSort)
       let auditor = await Auditor(repo: repo)
       guard !Task.isCancelled else { return }
       self.auditor = auditor
@@ -108,14 +113,10 @@ final class SweeperModel: ObservableObject {
   private func fill<T: Identifiable & Sendable>(_ items: [T], sortedBy sort: [KeyPathComparator<T>],
                                                 audit: @escaping @Sendable (T) async -> T, update: ([T]) -> Void) async {
     var rows = items
-    await withTaskGroup(of: T.self) { group in
-      for item in items { group.addTask { await audit(item) } }
-      for await audited in group {
-        if Task.isCancelled { group.cancelAll(); return }
-        if let index = rows.firstIndex(where: { $0.id == audited.id }) {
-          rows[index] = audited
-          update(rows)
-        }
+    await mapConcurrently(items, audit) { audited in
+      if let index = rows.firstIndex(where: { $0.id == audited.id }) {
+        rows[index] = audited
+        update(rows)
       }
     }
     guard !Task.isCancelled else { return }
@@ -124,14 +125,8 @@ final class SweeperModel: ObservableObject {
   }
 
   private func measureDiskUsage(_ paths: [String]) async {
-    await withTaskGroup(of: (String, Int?).self) { group in
-      for path in paths {
-        group.addTask { (path, Int(await Shell.run("du", ["-sk", path]).stdout.split(separator: "\t").first ?? "")) }
-      }
-      for await (path, kb) in group {
-        if Task.isCancelled { group.cancelAll(); return }
-        if let index = worktrees.firstIndex(where: { $0.path == path }) { worktrees[index].diskKB = kb }
-      }
+    await mapConcurrently(paths, limit: 4, { path in (path, Int(await Shell.run("du", ["-sk", path]).stdout.split(separator: "\t").first ?? "")) }) { path, kb in
+      if let index = worktrees.firstIndex(where: { $0.path == path }) { worktrees[index].diskKB = kb }
     }
   }
 
@@ -170,14 +165,17 @@ final class SweeperModel: ObservableObject {
     let safe = w.verdict.isSafeToClean
     let perform = {
       self.run({ await auditor.remove(w, force: !safe) }) {
-        self.worktrees.removeAll { $0.id == w.id }
+        let pruned = w.exists ? [w] : self.worktrees.filter { !$0.exists || $0.markedPrunable }
+        self.worktrees.removeAll { row in pruned.contains { $0.id == row.id } }
         self.branches.removeAll { $0.name == w.branch }
-        self.recovery = w.branch.map { Recovery(message: "Removed \(w.name) and deleted \($0) (was \(w.head.prefix(7)))", command: "git branch \($0) \(w.head)") }
-          ?? Recovery(message: "Removed \(w.name)", command: nil)
+        let what = pruned.count > 1 ? "Pruned \(pruned.count) stale worktree entries" : "Removed \(w.name)"
+        self.recovery = w.branch.map { Recovery(message: "\(what) and deleted \($0) (was \(w.head.prefix(7)))", command: "git branch \(shellQuoted($0)) \(w.head)") }
+          ?? Recovery(message: what, command: nil)
       }
     }
     if safe { return perform() }
     var lines = lossLines(w.status)
+    if w.verdict == .new { lines.insert("Created \(w.created.shortDisplay), less than a day ago.", at: 0) }
     if !w.usedBy.isEmpty { lines.insert("Processes are working in it: " + w.usedBy.joined(separator: ", "), at: 0) }
     if !w.dirtyFiles.isEmpty { lines.insert("Uncommitted: " + w.dirtyFiles.prefix(5).joined(separator: ", ") + (w.dirtyFiles.count > 5 ? ", …" : ""), at: 0) }
     pending = PendingAction(title: "Remove \(w.name)?", message: lines.isEmpty ? "This worktree is not marked safe." : lines.joined(separator: "\n"),
@@ -190,7 +188,7 @@ final class SweeperModel: ObservableObject {
     let perform = {
       self.run({ await auditor.delete(b, force: !safe) }) {
         self.branches.removeAll { $0.id == b.id }
-        self.recovery = Recovery(message: "Deleted \(b.name) (was \(b.head.prefix(7)))", command: "git branch \(b.name) \(b.head)")
+        self.recovery = Recovery(message: "Deleted \(b.name) (was \(b.head.prefix(7)))", command: "git branch \(shellQuoted(b.name)) \(b.head)")
       }
     }
     if safe { return perform() }
@@ -206,7 +204,7 @@ final class SweeperModel: ObservableObject {
                             buttonLabel: "Drop stash") {
       self.run({ await auditor.drop(s) }) {
         self.stashes.removeAll { $0.id == s.id }
-        self.recovery = Recovery(message: "Dropped stash \(s.sha.prefix(7))", command: "git stash store -m \"\(s.message)\" \(s.sha)")
+        self.recovery = Recovery(message: "Dropped stash \(s.sha.prefix(7))", command: "git stash store -m \(shellQuoted(s.message)) \(s.sha)")
       }
     }
   }
@@ -219,10 +217,9 @@ final class SweeperModel: ObservableObject {
   }
 
   private func run(_ action: @escaping @Sendable () async -> ShellResult, onSuccess: @escaping () -> Void) {
-    activeLoads += 1
-    Task {
+    track(Task {
       let result = await action()
-      activeLoads -= 1
+      guard !Task.isCancelled else { return }
       guard result.ok else {
         errorMessage = result.stderr
         return rescan()
@@ -230,7 +227,7 @@ final class SweeperModel: ObservableObject {
       onSuccess()
       if let auditor { self.auditor = await auditor.refreshingStashes() }
       loaded = [tab]
-    }
+    })
   }
 }
 

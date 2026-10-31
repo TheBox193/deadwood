@@ -58,3 +58,8 @@ import Testing
   #expect(cwds.map(\.command) == ["claude", "zsh", "node"])
   #expect(cwds.map(\.path) == ["/repo/wt-a", "/repo/wt-b", "/elsewhere"])
 }
+
+@Test func shellQuotingSurvivesSingleQuotes() {
+  #expect(shellQuoted("it's \"wip\"") == "'it'\\''s \"wip\"'")
+  #expect(shellQuoted("plain") == "'plain'")
+}

@@ -48,7 +48,7 @@ Rows appear as soon as `git` lists them; verdicts stream in once the auditor has
 
 Per branch or worktree:
 
-- Pull request state, and whether the local tip is the commit that merged (or an ancestor of it, after fetching `refs/pull/N/head` if needed)
+- Pull request state, and whether the local tip is the commit that merged (or an ancestor of it, after fetching `refs/pull/N/head` into `refs/sweeper/pull/N` if needed). Detached worktrees match PRs by commit SHA.
 - Commits ahead of `origin/HEAD`, whether the branch is pushed, whether the remote was deleted
 - Stash entries made on the branch (shown as a note only; a stash keeps its base commit, so deleting the branch loses nothing)
 - Last commit date

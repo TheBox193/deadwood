@@ -64,7 +64,7 @@ struct BranchStatus: Sendable {
   var lastCommitDate = Date.distantPast
   var ahead = 0
   var inBaseBranch = false
-  var hasRemoteBranch = false
+  var remoteName: String?
   var remoteGone = false
   var stashes: [String] = []
   var pullRequest: PullRequest?
@@ -77,9 +77,11 @@ struct BranchStatus: Sendable {
   var mergedRank: Int { fullyMerged ? 2 : (pullRequest?.isMerged == true ? 1 : 0) }
   var remoteLabel: String {
     if remoteGone { return "remote deleted" }
-    return hasRemoteBranch ? "origin/\(localLabel)" : "not pushed"
+    return remoteName ?? "not pushed"
   }
 }
+
+func shellQuoted(_ text: String) -> String { "'" + text.replacingOccurrences(of: "'", with: "'\\''") + "'" }
 
 struct Worktree: Identifiable, Sendable {
   let path: String

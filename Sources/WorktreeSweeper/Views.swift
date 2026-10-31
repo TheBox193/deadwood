@@ -12,6 +12,7 @@ struct ContentView: View {
         Button("Browse…", action: model.browse)
         Button(action: model.rescan) { Image(systemName: "arrow.clockwise") }
           .help("Rescan")
+          .accessibilityLabel("Rescan")
           .disabled(model.isLoading)
         ProgressView().controlSize(.small).opacity(model.isLoading ? 1 : 0)
       }
@@ -38,6 +39,7 @@ struct ContentView: View {
                 Button { copyToClipboard(command) } label: { Image(systemName: "doc.on.doc") }
                   .buttonStyle(.borderless)
                   .help("Copy the git command that brings it back:\n\(command)")
+                  .accessibilityLabel("Copy recovery command")
               }
             }
           }
@@ -103,6 +105,7 @@ struct WorktreesTable: View {
             .menuIndicator(.hidden)
             .fixedSize()
             .help("Open in…")
+            .accessibilityLabel("Open in")
           }
           if w.audited && w.verdict.canClean {
             TrashButton(help: "Remove worktree and delete its branch") { model.remove(w) }
@@ -198,6 +201,7 @@ struct TrashButton: View {
     Button(action: action) { Image(systemName: "trash") }
       .buttonStyle(.borderless)
       .help(help)
+      .accessibilityLabel(help)
   }
 }
 
@@ -213,6 +217,7 @@ struct StatusIcon: View {
           Image(systemName: pr.icon).foregroundStyle(prColor(pr))
         }
         .buttonStyle(.plain)
+        .accessibilityLabel("Open pull request \(pr.number) on GitHub")
         if pr.isMerged && !status.fullyMerged {
           Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange).font(.caption2)
         }

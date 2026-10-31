@@ -2,6 +2,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 NAME="Worktree Sweeper"
+VERSION="0.1"
 APP="dist/$NAME.app"
 
 swift build -c release
@@ -19,7 +20,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleExecutable</key><string>$NAME</string>
   <key>CFBundleIconFile</key><string>icon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>0.1</string>
+  <key>CFBundleShortVersionString</key><string>$VERSION</string>
   <key>NSHumanReadableCopyright</key><string>© $(date +%Y) Jonathan Stassen · jstassen.com</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>NSHighResolutionCapable</key><true/>

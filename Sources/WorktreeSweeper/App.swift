@@ -33,7 +33,7 @@ struct WorktreeSweeperApp: App {
     credits.append(NSAttributedString(string: "jstassen.com", attributes: [.font: font, .link: "https://jstassen.com"]))
     NSApplication.shared.orderFrontStandardAboutPanel(options: [
       .applicationName: "Worktree Sweeper",
-      .applicationVersion: "0.1",
+      .applicationVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "dev",
       .credits: credits,
       NSApplication.AboutPanelOptionKey(rawValue: "Copyright"): "© \(year) Jonathan Stassen",
     ])
