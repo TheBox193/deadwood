@@ -85,7 +85,8 @@ struct WorktreesTable: View {
       TableColumn("Branch", value: \.branchLabel)
       TableColumn("Verdict", value: \.verdict) { w in VerdictBadge(verdict: w.verdict, pending: !w.audited) }.width(90)
       TableColumn("PR", value: \.status.mergedRank) { w in StatusIcon(status: w.status) }.width(50)
-      TableColumn("Last commit", value: \.status.lastCommitDate) { w in Text(w.audited ? w.status.lastCommitDate.shortDisplay : "") }.width(80)
+      TableColumn("Created", value: \.created) { w in Text(w.created.shortDisplay).help("Folder creation time") }.width(80)
+      TableColumn("Last commit", value: \.status.lastCommitDate) { w in Text(w.status.lastCommitDate.shortDisplay) }.width(80)
       TableColumn("Size", value: \.diskSortKey) { w in
         Text(w.diskDisplay).monospacedDigit().help("Actual blocks used (du -sk); symlinks are not followed")
       }.width(70)
@@ -129,7 +130,7 @@ struct BranchesTable: View {
       TableColumn("Branch", value: \.name)
       TableColumn("Verdict", value: \.verdict) { b in VerdictBadge(verdict: b.verdict, pending: !b.audited) }.width(90)
       TableColumn("PR", value: \.status.mergedRank) { b in StatusIcon(status: b.status) }.width(50)
-      TableColumn("Last commit", value: \.status.lastCommitDate) { b in Text(b.audited ? b.status.lastCommitDate.shortDisplay : "") }.width(80)
+      TableColumn("Last commit", value: \.status.lastCommitDate) { b in Text(b.status.lastCommitDate.shortDisplay) }.width(80)
       TableColumn("Notes") { b in NotesText(b.notes) }
       TableColumn("") { b in
         if b.audited && b.verdict.canClean && b.worktreePath == nil {

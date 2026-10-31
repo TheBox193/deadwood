@@ -103,12 +103,26 @@ struct Auditor: Sendable {
   // MARK: Discovery
 
   static func discoverWorktrees(repo: String) async -> [Worktree] {
-    parseWorktrees(await Shell.git(["worktree", "list", "--porcelain"], in: repo).stdout)
+    var worktrees = parseWorktrees(await Shell.git(["worktree", "list", "--porcelain"], in: repo).stdout)
+    let dates = parseCommitDates(await Shell.git(["log", "--no-walk=unsorted", "--format=%H %ct"] + worktrees.map(\.head), in: repo).lines)
+    for i in worktrees.indices {
+      worktrees[i].createdAt = (try? FileManager.default.attributesOfItem(atPath: worktrees[i].path))?[.creationDate] as? Date
+      worktrees[i].status.lastCommitDate = dates[worktrees[i].head] ?? .distantPast
+    }
+    return worktrees
   }
 
   static func discoverBranches(repo: String, worktrees: [Worktree]) async -> [LocalBranch] {
-    let lines = await Shell.git(["for-each-ref", "refs/heads", "--format=%(refname:short)|%(objectname)|%(upstream:track)"], in: repo).lines
-    return parseBranches(lines, worktrees: worktrees)
+    let format = "%(refname:short)|%(objectname)|%(upstream:track)|%(committerdate:unix)"
+    return parseBranches(await Shell.git(["for-each-ref", "refs/heads", "--format=\(format)"], in: repo).lines, worktrees: worktrees)
+  }
+
+  static func parseCommitDates(_ lines: [String]) -> [String: Date] {
+    Dictionary(uniqueKeysWithValues: lines.compactMap { line in
+      let parts = line.split(separator: " ")
+      guard parts.count == 2, let date = Date(unixSeconds: String(parts[1])) else { return nil }
+      return (String(parts[0]), date)
+    })
   }
 
   static func discoverStashes(repo: String) async -> [Stash] {
@@ -137,9 +151,10 @@ struct Auditor: Sendable {
     let checkedOut = Dictionary(worktrees.compactMap { w in w.branch.map { ($0, w.path) } }, uniquingKeysWith: { a, _ in a })
     return lines.compactMap { line in
       let parts = line.components(separatedBy: "|")
-      guard parts.count == 3 else { return nil }
+      guard parts.count == 4 else { return nil }
       var b = LocalBranch(name: parts[0], head: parts[1], upstreamGone: parts[2] == "[gone]")
       b.worktreePath = checkedOut[parts[0]]
+      b.status.lastCommitDate = Date(unixSeconds: parts[3]) ?? .distantPast
       return b
     }
   }
@@ -176,10 +191,9 @@ struct Auditor: Sendable {
   func audit(_ wt: Worktree) async -> Worktree {
     var w = wt
     w.exists = FileManager.default.fileExists(atPath: w.path + "/.git")
-    w.status = await branchStatus(head: w.head, branch: w.branch)
+    w.status = await branchStatus(head: w.head, branch: w.branch, lastCommitDate: w.status.lastCommitDate)
     if w.branch == nil { w.status.localLabel = w.branchLabel }
     if w.exists {
-      w.createdAt = (try? FileManager.default.attributesOfItem(atPath: w.path))?[.creationDate] as? Date
       w.dirtyFiles = await Shell.git(["status", "--porcelain"], in: w.path).lines
         .map { String($0.dropFirst(3)) }
         .filter { !Self.ignoredDirtyPaths.contains($0) }
@@ -193,14 +207,13 @@ struct Auditor: Sendable {
 
     w.verdict = Judge.worktree(isMainCheckout: w.isMainCheckout, exists: w.exists, markedPrunable: w.markedPrunable,
                                inUse: !w.usedBy.isEmpty, createdAt: w.createdAt, dirty: !w.dirtyFiles.isEmpty, status: w.status)
-    if w.verdict == .new { w.notes.insert("created \(w.createdAt?.shortDisplay ?? "today")", at: 0) }
     w.audited = true
     return w
   }
 
   func audit(_ branch: LocalBranch) async -> LocalBranch {
     var b = branch
-    b.status = await branchStatus(head: b.head, branch: b.name)
+    b.status = await branchStatus(head: b.head, branch: b.name, lastCommitDate: b.status.lastCommitDate)
     b.status.remoteGone = b.upstreamGone
 
     b.notes = []
@@ -229,10 +242,10 @@ struct Auditor: Sendable {
     return s
   }
 
-  private func branchStatus(head: String, branch: String?) async -> BranchStatus {
+  private func branchStatus(head: String, branch: String?, lastCommitDate: Date) async -> BranchStatus {
     var s = BranchStatus()
     s.head = head
-    s.lastCommitDate = Date(unixSeconds: await Shell.git(["log", "-1", "--format=%ct", head], in: repo).stdout) ?? .distantPast
+    s.lastCommitDate = lastCommitDate
     s.ahead = Int(await Shell.git(["rev-list", "--count", "\(baseRef)..\(head)"], in: repo).stdout) ?? 0
     s.inBaseBranch = await Shell.git(["merge-base", "--is-ancestor", head, baseRef], in: repo).ok
     guard let branch else { return s }

@@ -26,6 +26,7 @@ extension Date {
   }
 
   var shortDisplay: String {
+    if self == .distantPast { return "" }
     let sameYear = Calendar.current.isDate(self, equalTo: Date(), toGranularity: .year)
     return formatted(sameYear ? .dateTime.month(.abbreviated).day() : .dateTime.month(.abbreviated).day().year())
   }
@@ -100,6 +101,7 @@ struct Worktree: Identifiable, Sendable {
   var id: String { path }
   var name: String { (path as NSString).lastPathComponent }
   var branchLabel: String { branch ?? "detached @ \(head.prefix(7))" }
+  var created: Date { createdAt ?? .distantPast }
   var diskSortKey: Int { diskKB ?? -1 }
   var diskDisplay: String {
     guard let diskKB else { return exists ? "…" : "" }

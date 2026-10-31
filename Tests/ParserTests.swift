@@ -27,10 +27,16 @@ import Testing
 
 @Test func branchLinesCarryGoneUpstreamAndWorktreePath() {
   let wts = Auditor.parseWorktrees("worktree /repo\nHEAD aaa\nbranch refs/heads/main\n\nworktree /wt\nHEAD bbb\nbranch refs/heads/feat\n")
-  let branches = Auditor.parseBranches(["main|aaa|", "feat|bbb|[gone]", "other|ccc|[ahead 1]", "malformed"], worktrees: wts)
+  let branches = Auditor.parseBranches(["main|aaa||1700000000", "feat|bbb|[gone]|1700000001", "other|ccc|[ahead 1]|1700000002", "malformed"], worktrees: wts)
   #expect(branches.map(\.name) == ["main", "feat", "other"])
   #expect(branches[1].upstreamGone && branches[1].worktreePath == "/wt")
   #expect(!branches[2].upstreamGone && branches[2].worktreePath == nil)
+  #expect(branches[2].status.lastCommitDate == Date(timeIntervalSince1970: 1_700_000_002))
+}
+
+@Test func commitDateLinesMapShaToDate() {
+  let dates = Auditor.parseCommitDates(["aaa 1700000000", "bbb 1700000001", "junk"])
+  #expect(dates["aaa"] == Date(timeIntervalSince1970: 1_700_000_000) && dates["bbb"] != nil && dates.count == 2)
 }
 
 @Test func stashLinesKeepPipesInMessagesAndFindTheBranch() {

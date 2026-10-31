@@ -38,9 +38,9 @@ final class SweeperModel: ObservableObject {
   @Published var worktreeSelection: Worktree.ID?
   @Published var branchSelection: LocalBranch.ID?
   @Published var stashSelection: Stash.ID?
-  @Published var worktreeSort = [KeyPathComparator(\Worktree.verdict), KeyPathComparator(\Worktree.status.lastCommitDate)]
-  @Published var branchSort = [KeyPathComparator(\LocalBranch.verdict), KeyPathComparator(\LocalBranch.status.lastCommitDate)]
-  @Published var stashSort = [KeyPathComparator(\Stash.verdict), KeyPathComparator(\Stash.date)]
+  @Published var worktreeSort = [KeyPathComparator(\Worktree.created)]
+  @Published var branchSort = [KeyPathComparator(\LocalBranch.status.lastCommitDate)]
+  @Published var stashSort = [KeyPathComparator(\Stash.date)]
   let openTargets = OpenTarget.detectAll()
 
   private var auditor: Auditor?
@@ -69,10 +69,10 @@ final class SweeperModel: ObservableObject {
     let repo = (repoPath as NSString).expandingTildeInPath
     track(Task {
       let foundWorktrees = await Auditor.discoverWorktrees(repo: repo)
-      worktrees = foundWorktrees
+      worktrees = foundWorktrees.sorted(using: worktreeSort)
       if foundWorktrees.isEmpty { errorMessage = "No worktrees found at \(repo). Is it a git repo?" }
-      branches = await Auditor.discoverBranches(repo: repo, worktrees: foundWorktrees)
-      stashes = await Auditor.discoverStashes(repo: repo)
+      branches = await Auditor.discoverBranches(repo: repo, worktrees: foundWorktrees).sorted(using: branchSort)
+      stashes = await Auditor.discoverStashes(repo: repo).sorted(using: stashSort)
       let auditor = await Auditor(repo: repo)
       guard !Task.isCancelled else { return }
       self.auditor = auditor

@@ -58,7 +58,7 @@ Per worktree, additionally:
 - Uncommitted files, ignoring `.vscode/settings.json` (edit `Auditor.ignoredDirtyPaths`)
 - Processes whose working directory is inside it, from `lsof`
 - Whether the folder still exists or git marks the entry prunable
-- Folder creation time
+- Folder creation time, shown as Created and the default sort
 - Disk usage from `du -sk`, loaded after the table appears
 
 Per stash: the branch it was made on and whether that branch still exists, file count, and whether it is a lint-staged automatic backup.
