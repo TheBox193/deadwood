@@ -7,6 +7,7 @@ enum Verdict: String, Comparable, CaseIterable {
   case nearDead = "Near-dead"
   case stale = "Stale"
   case inUse = "In use"
+  case new = "New"
   case active = "Active"
   case main = "Main"
 
@@ -32,7 +33,7 @@ extension Date {
   var daysAgo: Int { Calendar.current.dateComponents([.day], from: self, to: Date()).day ?? 0 }
 }
 
-struct PullRequest: Decodable {
+struct PullRequest: Decodable, Sendable {
   let number: Int
   let state: String
   let branch: String
@@ -42,6 +43,14 @@ struct PullRequest: Decodable {
   var isMerged: Bool { state == "MERGED" }
   var isOpen: Bool { state == "OPEN" }
 
+  var icon: String {
+    switch state {
+    case "MERGED": "arrow.triangle.merge"
+    case "OPEN": "arrow.triangle.pull"
+    default: "xmark.circle"
+    }
+  }
+
   enum CodingKeys: String, CodingKey {
     case number, state, url, mergedAt
     case branch = "headRefName"
@@ -49,7 +58,7 @@ struct PullRequest: Decodable {
   }
 }
 
-struct BranchStatus {
+struct BranchStatus: Sendable {
   var head = ""
   var lastCommitDate = Date.distantPast
   var ahead = 0
@@ -71,7 +80,7 @@ struct BranchStatus {
   }
 }
 
-struct Worktree: Identifiable {
+struct Worktree: Identifiable, Sendable {
   let path: String
   let head: String
   let branch: String?
@@ -79,6 +88,7 @@ struct Worktree: Identifiable {
   let markedPrunable: Bool
 
   var exists = true
+  var createdAt: Date?
   var dirtyFiles: [String] = []
   var usedBy: [String] = []
   var diskKB: Int?
@@ -97,7 +107,7 @@ struct Worktree: Identifiable {
   }
 }
 
-struct LocalBranch: Identifiable {
+struct LocalBranch: Identifiable, Sendable {
   let name: String
   let head: String
   let upstreamGone: Bool
@@ -111,7 +121,7 @@ struct LocalBranch: Identifiable {
   var id: String { name }
 }
 
-struct Stash: Identifiable {
+struct Stash: Identifiable, Sendable {
   let sha: String
   let date: Date
   let message: String
@@ -137,7 +147,7 @@ struct OpenTarget: Identifiable {
   static func app(_ name: String) -> OpenTarget? {
     let installed = ["/Applications", NSHomeDirectory() + "/Applications"].contains { FileManager.default.fileExists(atPath: "\($0)/\(name).app") }
     guard installed else { return nil }
-    return OpenTarget(name: name) { path in Task.detached { _ = Shell.run("open", ["-a", name, path]) } }
+    return OpenTarget(name: name) { path in Task { _ = await Shell.run("open", ["-a", name, path]) } }
   }
 
   static func detectAll() -> [OpenTarget] {

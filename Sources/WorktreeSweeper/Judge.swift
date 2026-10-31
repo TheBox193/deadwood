@@ -3,12 +3,14 @@ import Foundation
 enum Judge {
   static let staleAfterDays = 14
   static let staleStashAfterDays = 30
+  static let newWithin: TimeInterval = 24 * 60 * 60
 
-  static func worktree(isMainCheckout: Bool, exists: Bool, markedPrunable: Bool, inUse: Bool, dirty: Bool, status: BranchStatus) -> Verdict {
+  static func worktree(isMainCheckout: Bool, exists: Bool, markedPrunable: Bool, inUse: Bool, createdAt: Date?, dirty: Bool, status: BranchStatus) -> Verdict {
     if isMainCheckout { return .main }
     if !exists || markedPrunable { return .prunable }
     if inUse { return .inUse }
-    if let v = merged(status, hasLeftovers: dirty || !status.stashes.isEmpty) { return v }
+    if let createdAt, Date().timeIntervalSince(createdAt) < newWithin { return .new }
+    if let v = merged(status, hasLeftovers: dirty) { return v }
     if status.fullyMerged { return dirty ? .active : .nearDead }
     return status.lastCommitDate.daysAgo > staleAfterDays ? .stale : .active
   }
@@ -16,7 +18,7 @@ enum Judge {
   static func branch(isBaseBranch: Bool, checkedOut: Bool, status: BranchStatus) -> Verdict {
     if isBaseBranch { return .main }
     if checkedOut { return .inUse }
-    if let v = merged(status, hasLeftovers: !status.stashes.isEmpty) { return v }
+    if let v = merged(status, hasLeftovers: false) { return v }
     if status.fullyMerged { return .nearDead }
     return status.lastCommitDate.daysAgo > staleAfterDays ? .stale : .active
   }

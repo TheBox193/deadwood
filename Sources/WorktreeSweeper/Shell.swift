@@ -1,6 +1,6 @@
 import Foundation
 
-struct ShellResult {
+struct ShellResult: Sendable {
   let status: Int32
   let stdout: String
   let stderr: String
@@ -9,29 +9,65 @@ struct ShellResult {
 }
 
 enum Shell {
-  static func run(_ command: String, _ args: [String], cwd: String? = nil) -> ShellResult {
+  static func run(_ command: String, _ args: [String], cwd: String? = nil) async -> ShellResult {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
     process.arguments = [command] + args
     if let cwd { process.currentDirectoryURL = URL(fileURLWithPath: cwd) }
     var env = ProcessInfo.processInfo.environment
     env["PATH"] = (env["PATH"] ?? "/usr/bin:/bin") + ":/opt/homebrew/bin:/usr/local/bin"
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    env["GH_PROMPT_DISABLED"] = "1"
+    if env["GIT_SSH_COMMAND"] == nil { env["GIT_SSH_COMMAND"] = "ssh -oBatchMode=yes" }
     process.environment = env
-    let out = Pipe(), err = Pipe()
-    process.standardOutput = out
-    process.standardError = err
-    do { try process.run() } catch {
-      return ShellResult(status: 127, stdout: "", stderr: error.localizedDescription)
+    let out = PipeReader(), err = PipeReader()
+    process.standardOutput = out.pipe
+    process.standardError = err.pipe
+
+    return await withCheckedContinuation { continuation in
+      let done = DispatchGroup()
+      done.enter()
+      process.terminationHandler = { _ in done.leave() }
+      do { try process.run() } catch {
+        process.terminationHandler = nil
+        done.leave()
+        return continuation.resume(returning: ShellResult(status: 127, stdout: "", stderr: error.localizedDescription))
+      }
+      out.start(done)
+      err.start(done)
+      done.notify(queue: .global()) {
+        continuation.resume(returning: ShellResult(
+          status: process.terminationStatus,
+          stdout: out.text.trimmingCharacters(in: .newlines),
+          stderr: err.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        ))
+      }
     }
-    let outData = out.fileHandleForReading.readDataToEndOfFile()
-    let errData = err.fileHandleForReading.readDataToEndOfFile()
-    process.waitUntilExit()
-    return ShellResult(
-      status: process.terminationStatus,
-      stdout: String(decoding: outData, as: UTF8.self).trimmingCharacters(in: .newlines),
-      stderr: String(decoding: errData, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-    )
   }
 
-  static func git(_ args: [String], in dir: String) -> ShellResult { run("git", ["-C", dir] + args) }
+  static func git(_ args: [String], in dir: String) async -> ShellResult { await run("git", ["-C", dir] + args) }
+}
+
+private final class PipeReader: @unchecked Sendable {
+  let pipe = Pipe()
+  private var data = Data()
+  private let lock = NSLock()
+
+  var text: String {
+    lock.lock(); defer { lock.unlock() }
+    return String(decoding: data, as: UTF8.self)
+  }
+
+  func start(_ group: DispatchGroup) {
+    group.enter()
+    pipe.fileHandleForReading.readabilityHandler = { [self] handle in
+      let chunk = handle.availableData
+      if chunk.isEmpty {
+        handle.readabilityHandler = nil
+        group.leave()
+      } else {
+        lock.lock(); data.append(chunk); lock.unlock()
+      }
+    }
+  }
 }

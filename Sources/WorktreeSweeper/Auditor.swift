@@ -1,35 +1,58 @@
 import Foundation
 
-final class PullRequestCache: @unchecked Sendable {
-  private var byBranch: [String: [PullRequest]] = [:]
-  private let lock = NSLock()
+actor PullRequestCache {
+  private var byBranch: [String: [PullRequest]]
+  private var inFlight: [String: Task<[PullRequest], Never>] = [:]
   private let repo: String
+  let failure: String?
 
-  init(repo: String) {
+  static func load(repo: String) async -> PullRequestCache {
+    let bulk = await fetch(["--limit", "1000"], repo: repo)
+    return PullRequestCache(repo: repo, prs: bulk.prs, failure: bulk.ok ? nil : bulk.stderr)
+  }
+
+  private init(repo: String, prs: [PullRequest], failure: String?) {
     self.repo = repo
-    for pr in Self.fetch(["--limit", "1000"], repo: repo) { byBranch[pr.branch, default: []].append(pr) }
+    self.failure = failure
+    byBranch = Dictionary(grouping: prs, by: \.branch)
   }
 
-  func lookup(branch: String) -> PullRequest? {
-    lock.lock()
-    let cached = byBranch[branch]
-    lock.unlock()
-    let prs = cached ?? Self.fetch(["--head", branch, "--limit", "10"], repo: repo)
-    if cached == nil {
-      lock.lock()
-      byBranch[branch] = prs
-      lock.unlock()
-    }
-    return prs.first(where: \.isMerged) ?? prs.first(where: \.isOpen) ?? prs.first
+  func lookup(branch: String) async -> PullRequest? {
+    if let cached = byBranch[branch] { return Self.pick(cached) }
+    let task = inFlight[branch] ?? Task { [repo] in await Self.fetch(["--head", branch, "--limit", "10"], repo: repo).prs }
+    inFlight[branch] = task
+    let prs = await task.value
+    byBranch[branch] = prs
+    inFlight[branch] = nil
+    return Self.pick(prs)
   }
 
-  private static func fetch(_ args: [String], repo: String) -> [PullRequest] {
+  private static func pick(_ prs: [PullRequest]) -> PullRequest? {
+    prs.first(where: \.isMerged) ?? prs.first(where: \.isOpen) ?? prs.first
+  }
+
+  private static func fetch(_ args: [String], repo: String) async -> (ok: Bool, prs: [PullRequest], stderr: String) {
     let fields = "number,state,headRefName,headRefOid,url,mergedAt"
-    let result = Shell.run("gh", ["pr", "list", "--state", "all", "--json", fields] + args, cwd: repo)
-    guard result.ok else { return [] }
+    let result = await Shell.run("gh", ["pr", "list", "--state", "all", "--json", fields] + args, cwd: repo)
+    guard result.ok else { return (false, [], result.stderr) }
     let decoder = JSONDecoder()
     decoder.dateDecodingStrategy = .iso8601
-    return (try? decoder.decode([PullRequest].self, from: Data(result.stdout.utf8))) ?? []
+    return (true, (try? decoder.decode([PullRequest].self, from: Data(result.stdout.utf8))) ?? [], "")
+  }
+}
+
+/// Serialises `git fetch` calls so parallel audits do not fight over the repo's lock files.
+actor FetchGate {
+  private var last: Task<Void, Never>?
+
+  func fetch(_ args: [String], in repo: String) async {
+    let previous = last
+    let task = Task {
+      await previous?.value
+      _ = await Shell.git(["fetch", "-q", "origin"] + args, in: repo)
+    }
+    last = task
+    await task.value
   }
 }
 
@@ -39,43 +62,60 @@ struct Auditor: Sendable {
   let repo: String
   let baseRef: String
   let baseBranch: String
-  private let stashLines: [String]
+  let warnings: [String]
+  private var stashLines: [String]
   private let processCwds: [(command: String, path: String)]
   private let pullRequests: PullRequestCache
+  private let fetchGate = FetchGate()
 
-  init(repo: String) {
+  init(repo: String) async {
     self.repo = repo
-    _ = Shell.git(["fetch", "-q", "--prune", "origin"], in: repo)
-    let head = Shell.git(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], in: repo)
+    var warnings: [String] = []
+    let fetch = await Shell.git(["fetch", "-q", "--prune", "origin"], in: repo)
+    if !fetch.ok { warnings.append("Could not fetch origin, so merge checks use the last known state: \(fetch.stderr)") }
+    let head = await Shell.git(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], in: repo)
     baseRef = head.ok ? head.stdout : "origin/main"
     baseBranch = String(baseRef.split(separator: "/", maxSplits: 1).last ?? "main")
-    stashLines = Shell.git(["stash", "list", "--format=%gs"], in: repo).lines
-    processCwds = Self.listProcessCwds()
-    pullRequests = PullRequestCache(repo: repo)
+    stashLines = await Shell.git(["stash", "list", "--format=%gs"], in: repo).lines
+    processCwds = Self.parseProcessCwds(await Shell.run("lsof", ["-a", "-d", "cwd", "-u", "\(getuid())", "-Fcn"]).lines)
+    pullRequests = await PullRequestCache.load(repo: repo)
+    if let failure = pullRequests.failure {
+      warnings.append("PR data unavailable, so squash-merged branches look unmerged: \(failure)")
+    }
+    self.warnings = warnings
   }
 
-  static func auditAll<T: Sendable>(_ items: [T], _ audit: @escaping @Sendable (T) -> T) async -> [T] {
+  func refreshingStashes() async -> Auditor {
+    var copy = self
+    copy.stashLines = await Shell.git(["stash", "list", "--format=%gs"], in: repo).lines
+    return copy
+  }
+
+  static func auditAll<T: Sendable>(_ items: [T], _ audit: @escaping @Sendable (T) async -> T) async -> [T] {
     await withTaskGroup(of: T.self) { group in
-      for item in items { group.addTask { audit(item) } }
+      for item in items { group.addTask { await audit(item) } }
       var out: [T] = []
       for await item in group { out.append(item) }
       return out
     }
   }
 
-  private static func listProcessCwds() -> [(command: String, path: String)] {
-    var result: [(String, String)] = []
-    var command = ""
-    for line in Shell.run("lsof", ["-a", "-d", "cwd", "-u", "\(getuid())", "-Fcn"]).lines {
-      if line.hasPrefix("c") { command = String(line.dropFirst()) }
-      else if line.hasPrefix("n") { result.append((command, String(line.dropFirst()))) }
-    }
-    return result
-  }
-
   // MARK: Discovery
 
-  static func discoverWorktrees(repo: String) -> [Worktree] {
+  static func discoverWorktrees(repo: String) async -> [Worktree] {
+    parseWorktrees(await Shell.git(["worktree", "list", "--porcelain"], in: repo).stdout)
+  }
+
+  static func discoverBranches(repo: String, worktrees: [Worktree]) async -> [LocalBranch] {
+    let lines = await Shell.git(["for-each-ref", "refs/heads", "--format=%(refname:short)|%(objectname)|%(upstream:track)"], in: repo).lines
+    return parseBranches(lines, worktrees: worktrees)
+  }
+
+  static func discoverStashes(repo: String) async -> [Stash] {
+    parseStashes(await Shell.git(["stash", "list", "--format=%H|%ct|%gs"], in: repo).lines)
+  }
+
+  static func parseWorktrees(_ porcelain: String) -> [Worktree] {
     var result: [Worktree] = []
     var path = "", head = "", branch: String?, prunable = false
     let flush = {
@@ -83,7 +123,7 @@ struct Auditor: Sendable {
       result.append(Worktree(path: path, head: head, branch: branch, isMainCheckout: result.isEmpty, markedPrunable: prunable))
       path = ""; head = ""; branch = nil; prunable = false
     }
-    for line in Shell.git(["worktree", "list", "--porcelain"], in: repo).stdout.components(separatedBy: "\n") {
+    for line in porcelain.components(separatedBy: "\n") {
       if line.hasPrefix("worktree ") { flush(); path = String(line.dropFirst(9)) }
       else if line.hasPrefix("HEAD ") { head = String(line.dropFirst(5)) }
       else if line.hasPrefix("branch refs/heads/") { branch = String(line.dropFirst(18)) }
@@ -93,9 +133,9 @@ struct Auditor: Sendable {
     return result
   }
 
-  static func discoverBranches(repo: String, worktrees: [Worktree]) -> [LocalBranch] {
+  static func parseBranches(_ lines: [String], worktrees: [Worktree]) -> [LocalBranch] {
     let checkedOut = Dictionary(worktrees.compactMap { w in w.branch.map { ($0, w.path) } }, uniquingKeysWith: { a, _ in a })
-    return Shell.git(["for-each-ref", "refs/heads", "--format=%(refname:short)|%(objectname)|%(upstream:track)"], in: repo).lines.compactMap { line in
+    return lines.compactMap { line in
       let parts = line.components(separatedBy: "|")
       guard parts.count == 3 else { return nil }
       var b = LocalBranch(name: parts[0], head: parts[1], upstreamGone: parts[2] == "[gone]")
@@ -104,16 +144,16 @@ struct Auditor: Sendable {
     }
   }
 
-  static func discoverStashes(repo: String) -> [Stash] {
-    Shell.git(["stash", "list", "--format=%H|%ct|%gs"], in: repo).lines.compactMap { line in
+  static func parseStashes(_ lines: [String]) -> [Stash] {
+    lines.compactMap { line in
       let parts = line.components(separatedBy: "|")
       guard parts.count >= 3, let date = Date(unixSeconds: parts[1]) else { return nil }
       let message = parts[2...].joined(separator: "|")
-      return Stash(sha: parts[0], date: date, message: message, branch: Self.stashBranch(message))
+      return Stash(sha: parts[0], date: date, message: message, branch: stashBranch(message))
     }
   }
 
-  private static func stashBranch(_ message: String) -> String? {
+  static func stashBranch(_ message: String) -> String? {
     for prefix in ["WIP on ", "On "] where message.hasPrefix(prefix) {
       let rest = message.dropFirst(prefix.count)
       if let colon = rest.firstIndex(of: ":") { return String(rest[..<colon]) }
@@ -121,15 +161,26 @@ struct Auditor: Sendable {
     return nil
   }
 
+  static func parseProcessCwds(_ lsofLines: [String]) -> [(command: String, path: String)] {
+    var result: [(String, String)] = []
+    var command = ""
+    for line in lsofLines {
+      if line.hasPrefix("c") { command = String(line.dropFirst()) }
+      else if line.hasPrefix("n") { result.append((command, String(line.dropFirst()))) }
+    }
+    return result
+  }
+
   // MARK: Auditing
 
-  func audit(_ wt: Worktree) -> Worktree {
+  func audit(_ wt: Worktree) async -> Worktree {
     var w = wt
     w.exists = FileManager.default.fileExists(atPath: w.path + "/.git")
-    w.status = branchStatus(head: w.head, branch: w.branch)
+    w.status = await branchStatus(head: w.head, branch: w.branch)
     if w.branch == nil { w.status.localLabel = w.branchLabel }
     if w.exists {
-      w.dirtyFiles = Shell.git(["status", "--porcelain"], in: w.path).lines
+      w.createdAt = (try? FileManager.default.attributesOfItem(atPath: w.path))?[.creationDate] as? Date
+      w.dirtyFiles = await Shell.git(["status", "--porcelain"], in: w.path).lines
         .map { String($0.dropFirst(3)) }
         .filter { !Self.ignoredDirtyPaths.contains($0) }
     }
@@ -141,14 +192,15 @@ struct Auditor: Sendable {
     w.notes += statusNotes(w.status)
 
     w.verdict = Judge.worktree(isMainCheckout: w.isMainCheckout, exists: w.exists, markedPrunable: w.markedPrunable,
-                               inUse: !w.usedBy.isEmpty, dirty: !w.dirtyFiles.isEmpty, status: w.status)
+                               inUse: !w.usedBy.isEmpty, createdAt: w.createdAt, dirty: !w.dirtyFiles.isEmpty, status: w.status)
+    if w.verdict == .new { w.notes.insert("created \(w.createdAt?.shortDisplay ?? "today")", at: 0) }
     w.audited = true
     return w
   }
 
-  func audit(_ branch: LocalBranch) -> LocalBranch {
+  func audit(_ branch: LocalBranch) async -> LocalBranch {
     var b = branch
-    b.status = branchStatus(head: b.head, branch: b.name)
+    b.status = await branchStatus(head: b.head, branch: b.name)
     b.status.remoteGone = b.upstreamGone
 
     b.notes = []
@@ -160,12 +212,12 @@ struct Auditor: Sendable {
     return b
   }
 
-  func audit(_ stash: Stash) -> Stash {
+  func audit(_ stash: Stash) async -> Stash {
     var s = stash
     if let branch = s.branch {
-      s.branchExists = Shell.git(["rev-parse", "--verify", "-q", "refs/heads/\(branch)"], in: repo).ok
+      s.branchExists = await Shell.git(["rev-parse", "--verify", "-q", "refs/heads/\(branch)"], in: repo).ok
     }
-    s.fileCount = Shell.git(["diff", "--name-only", "\(s.sha)^1", s.sha], in: repo).lines.count
+    s.fileCount = await Shell.git(["diff", "--name-only", "\(s.sha)^1", s.sha], in: repo).lines.count
 
     s.notes = []
     if s.branch != nil && !s.branchExists { s.notes.append("branch deleted") }
@@ -177,28 +229,28 @@ struct Auditor: Sendable {
     return s
   }
 
-  private func branchStatus(head: String, branch: String?) -> BranchStatus {
+  private func branchStatus(head: String, branch: String?) async -> BranchStatus {
     var s = BranchStatus()
     s.head = head
-    s.lastCommitDate = Date(unixSeconds: Shell.git(["log", "-1", "--format=%ct", head], in: repo).stdout) ?? .distantPast
-    s.ahead = Int(Shell.git(["rev-list", "--count", "\(baseRef)..\(head)"], in: repo).stdout) ?? 0
-    s.inBaseBranch = Shell.git(["merge-base", "--is-ancestor", head, baseRef], in: repo).ok
+    s.lastCommitDate = Date(unixSeconds: await Shell.git(["log", "-1", "--format=%ct", head], in: repo).stdout) ?? .distantPast
+    s.ahead = Int(await Shell.git(["rev-list", "--count", "\(baseRef)..\(head)"], in: repo).stdout) ?? 0
+    s.inBaseBranch = await Shell.git(["merge-base", "--is-ancestor", head, baseRef], in: repo).ok
     guard let branch else { return s }
     s.localLabel = branch
-    s.hasRemoteBranch = Shell.git(["rev-parse", "--verify", "-q", "origin/\(branch)"], in: repo).ok
+    s.hasRemoteBranch = await Shell.git(["rev-parse", "--verify", "-q", "origin/\(branch)"], in: repo).ok
     s.stashes = stashLines.filter { Self.stashBranch($0) == branch }
-    s.pullRequest = pullRequests.lookup(branch: branch)
+    s.pullRequest = await pullRequests.lookup(branch: branch)
     if let pr = s.pullRequest, pr.isMerged, pr.headSha != head {
-      s.tipWithinMergedPR = tipIsWithin(prHead: pr.headSha, prNumber: pr.number, tip: head)
+      s.tipWithinMergedPR = await tipIsWithin(prHead: pr.headSha, prNumber: pr.number, tip: head)
     }
     return s
   }
 
-  private func tipIsWithin(prHead: String, prNumber: Int, tip: String) -> Bool {
-    if !Shell.git(["cat-file", "-e", prHead], in: repo).ok {
-      _ = Shell.git(["fetch", "-q", "origin", "refs/pull/\(prNumber)/head"], in: repo)
+  private func tipIsWithin(prHead: String, prNumber: Int, tip: String) async -> Bool {
+    if await !Shell.git(["cat-file", "-e", prHead], in: repo).ok {
+      await fetchGate.fetch(["refs/pull/\(prNumber)/head"], in: repo)
     }
-    return Shell.git(["merge-base", "--is-ancestor", tip, prHead], in: repo).ok
+    return await Shell.git(["merge-base", "--is-ancestor", tip, prHead], in: repo).ok
   }
 
   private func processesWorking(in path: String) -> [String] {
@@ -212,7 +264,7 @@ struct Auditor: Sendable {
   private func statusNotes(_ s: BranchStatus) -> [String] {
     var notes: [String] = []
     if !s.stashes.isEmpty { notes.append("\(s.stashes.count) stash") }
-    if s.pullRequest?.isMerged == true && !s.fullyMerged { notes.append("has commits that were not in the merged PR") }
+    if s.pullRequest?.isMerged == true && !s.fullyMerged { notes.append("commits beyond merged PR") }
     else if s.ahead > 0 && !s.fullyMerged { notes.append("\(s.ahead) ahead of \(baseRef)") }
     if s.remoteGone { notes.append("remote deleted") }
     else if !s.localLabel.isEmpty && !s.hasRemoteBranch && !s.fullyMerged { notes.append("not pushed") }
@@ -221,22 +273,27 @@ struct Auditor: Sendable {
 
   // MARK: Actions
 
-  func remove(_ w: Worktree) -> ShellResult {
+  func remove(_ w: Worktree, force: Bool) async -> ShellResult {
     var result = w.exists
-      ? Shell.git(["worktree", "remove", "--force", w.path], in: repo)
-      : Shell.git(["worktree", "prune"], in: repo)
-    if result.ok, let branch = w.branch { result = Shell.git(["branch", "-D", branch], in: repo) }
+      ? await Shell.git(["worktree", "remove"] + (force ? ["--force"] : []) + [w.path], in: repo)
+      : await Shell.git(["worktree", "prune"], in: repo)
+    if result.ok, let branch = w.branch { result = await deleteBranch(branch, force: force, status: w.status) }
     return result
   }
 
-  func delete(_ b: LocalBranch) -> ShellResult {
-    Shell.git(["branch", "-D", b.name], in: repo)
+  func delete(_ b: LocalBranch, force: Bool) async -> ShellResult {
+    await deleteBranch(b.name, force: force, status: b.status)
   }
 
-  func drop(_ stash: Stash) -> ShellResult {
-    let ref = Shell.git(["stash", "list", "--format=%gd %H"], in: repo).lines
+  /// `git branch -d` only recognises merges it can see in history, so a squash-merged branch needs `-D`.
+  private func deleteBranch(_ name: String, force: Bool, status: BranchStatus) async -> ShellResult {
+    await Shell.git(["branch", force || !status.inBaseBranch ? "-D" : "-d", name], in: repo)
+  }
+
+  func drop(_ stash: Stash) async -> ShellResult {
+    let ref = await Shell.git(["stash", "list", "--format=%gd %H"], in: repo).lines
       .first { $0.hasSuffix(stash.sha) }?.split(separator: " ").first
     guard let ref else { return ShellResult(status: 1, stdout: "", stderr: "Stash \(stash.sha.prefix(7)) is no longer in the list") }
-    return Shell.git(["stash", "drop", String(ref)], in: repo)
+    return await Shell.git(["stash", "drop", String(ref)], in: repo)
   }
 }

@@ -6,7 +6,7 @@ struct WorktreeSweeperApp: App {
   init() {
     if let index = CommandLine.arguments.firstIndex(of: "--audit") {
       let repo = CommandLine.arguments.dropFirst(index + 1).first ?? SweeperModel.defaultRepo
-      Task.detached { await Self.printAudit(repo: (repo as NSString).expandingTildeInPath); exit(0) }
+      Task { await Self.printAudit(repo: (repo as NSString).expandingTildeInPath); exit(0) }
       RunLoop.main.run()
     }
     NSApplication.shared.setActivationPolicy(.regular)
@@ -40,10 +40,11 @@ struct WorktreeSweeperApp: App {
   }
 
   private static func printAudit(repo: String) async {
-    let auditor = Auditor(repo: repo)
-    let worktrees = await Auditor.auditAll(Auditor.discoverWorktrees(repo: repo)) { auditor.audit($0) }
-    let branches = await Auditor.auditAll(Auditor.discoverBranches(repo: repo, worktrees: worktrees)) { auditor.audit($0) }
-    let stashes = await Auditor.auditAll(Auditor.discoverStashes(repo: repo)) { auditor.audit($0) }
+    let auditor = await Auditor(repo: repo)
+    for warning in auditor.warnings { print("!! \(warning)") }
+    let worktrees = await Auditor.auditAll(Auditor.discoverWorktrees(repo: repo)) { await auditor.audit($0) }
+    let branches = await Auditor.auditAll(Auditor.discoverBranches(repo: repo, worktrees: worktrees)) { await auditor.audit($0) }
+    let stashes = await Auditor.auditAll(Auditor.discoverStashes(repo: repo)) { await auditor.audit($0) }
     printSection("Worktrees", worktrees.map { ($0.verdict, $0.status.lastCommitDate, "\($0.name) [\($0.branchLabel)]", $0.notes) })
     printSection("Branches", branches.map { ($0.verdict, $0.status.lastCommitDate, $0.name, $0.notes) })
     printSection("Stashes", stashes.map { ($0.verdict, $0.date, $0.message, $0.notes) })

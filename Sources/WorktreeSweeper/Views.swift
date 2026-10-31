@@ -23,17 +23,33 @@ struct ContentView: View {
         StashesTable(model: model).tabItem { Text(countedTitle("Stashes", model.stashes.count)) }.tag(SweeperModel.Tab.stashes)
       }
       .padding(.horizontal)
+      .onDeleteCommand(perform: model.removeSelected)
 
-      HStack {
-        if let error = model.errorMessage { Text(error).foregroundStyle(.red) }
+      HStack(alignment: .firstTextBaseline) {
+        VStack(alignment: .leading, spacing: 2) {
+          if let error = model.errorMessage { Text(error).foregroundStyle(.red) }
+          ForEach(model.warnings, id: \.self) { warning in
+            Label(warning, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange).lineLimit(1).help(warning)
+          }
+          if let recovery = model.recovery {
+            HStack(spacing: 4) {
+              Text(recovery.message).foregroundStyle(.secondary)
+              if let command = recovery.command {
+                Button { copyToClipboard(command) } label: { Image(systemName: "doc.on.doc") }
+                  .buttonStyle(.borderless)
+                  .help("Copy the git command that brings it back:\n\(command)")
+              }
+            }
+          }
+        }
         Spacer()
         if let scannedAt = model.scannedAt {
           Text("Scanned \(scannedAt.formatted(date: .omitted, time: .shortened))")
             .foregroundStyle(.secondary)
             .help("Deleting after 20 minutes asks for a rescan first")
         }
-        if let total = model.totalDiskDisplay {
-          Text("· \(model.worktrees.count) worktrees · \(total) on disk")
+        if model.tab == .worktrees, let total = model.totalDiskDisplay {
+          Text("· \(total) on disk")
             .foregroundStyle(.secondary)
             .help("Sum of du -sk over every worktree folder")
         }
@@ -136,7 +152,7 @@ struct StashesTable: View {
 
   var body: some View {
     Table(model.stashes, selection: $model.stashSelection, sortOrder: $model.stashSort) {
-      TableColumn("Stash", value: \.message) { s in Text(s.message).help(s.sha) }
+      TableColumn("Stash", value: \.message) { s in Text(s.message).help(s.message + "\n" + s.sha) }
       TableColumn("Branch") { s in Text(s.branch ?? "") }
       TableColumn("Verdict", value: \.verdict) { s in VerdictBadge(verdict: s.verdict, pending: !s.audited) }.width(90)
       TableColumn("Date", value: \.date) { s in Text(s.date.shortDisplay) }.width(80)
@@ -161,7 +177,9 @@ struct StashesTable: View {
 struct NotesText: View {
   let notes: [String]
   init(_ notes: [String]) { self.notes = notes }
-  var body: some View { Text(notes.joined(separator: " · ")).foregroundStyle(.secondary) }
+  var body: some View {
+    Text(notes.joined(separator: " · ")).foregroundStyle(.secondary).help(notes.joined(separator: "\n"))
+  }
 }
 
 struct CopyButton: View {
@@ -191,8 +209,7 @@ struct StatusIcon: View {
         Button {
           if let url = URL(string: pr.url) { NSWorkspace.shared.open(url) }
         } label: {
-          Image(systemName: pr.isMerged ? "arrow.triangle.merge" : pr.isOpen ? "arrow.triangle.pull" : "xmark.circle")
-            .foregroundStyle(pr.isMerged ? .purple : pr.isOpen ? .green : .secondary)
+          Image(systemName: pr.icon).foregroundStyle(prColor(pr))
         }
         .buttonStyle(.plain)
         if pr.isMerged && !status.fullyMerged {
@@ -205,6 +222,12 @@ struct StatusIcon: View {
       }
     }
     .help(tooltip)
+  }
+
+  private func prColor(_ pr: PullRequest) -> Color {
+    if pr.isMerged { return .purple }
+    if pr.isOpen { return .green }
+    return .secondary
   }
 
   private var tooltip: String {
@@ -246,18 +269,26 @@ struct VerdictBadge: View {
     Text(verdict.rawValue)
       .font(.caption.weight(.semibold))
       .padding(.horizontal, 6).padding(.vertical, 2)
-      .background(color.opacity(0.18), in: Capsule())
-      .foregroundStyle(color)
+      .background(fill, in: Capsule())
+      .foregroundStyle(text)
   }
 
-  private var color: Color {
+  private var fill: Color {
     switch verdict {
     case .prunable, .dead: .red
     case .nearDead: .orange
     case .stale: .yellow
     case .inUse: .blue
+    case .new: .mint
     case .active: .green
-    case .main: .secondary
+    case .main: .gray
+    }
+  }
+
+  private var text: Color {
+    switch verdict {
+    case .stale, .new: .black.opacity(0.75)
+    default: .white
     }
   }
 }
