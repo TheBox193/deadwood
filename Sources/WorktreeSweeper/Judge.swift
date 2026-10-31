@@ -23,8 +23,8 @@ enum Judge {
     return status.lastCommitDate.daysAgo > staleAfterDays ? .stale : .active
   }
 
-  static func stash(isLintStagedBackup: Bool, branchDeleted: Bool, date: Date) -> Verdict {
-    if isLintStagedBackup { return .dead }
+  static func stash(isLintStagedBackup: Bool, branchDeleted: Bool, inMain: Bool, date: Date) -> Verdict {
+    if isLintStagedBackup || inMain { return .dead }
     if branchDeleted { return .nearDead }
     return date.daysAgo > staleStashAfterDays ? .stale : .active
   }

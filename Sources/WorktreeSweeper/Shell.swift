@@ -9,7 +9,7 @@ struct ShellResult: Sendable {
 }
 
 enum Shell {
-  static func run(_ command: String, _ args: [String], cwd: String? = nil) async -> ShellResult {
+  static func run(_ command: String, _ args: [String], cwd: String? = nil, env extra: [String: String] = [:]) async -> ShellResult {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
     process.arguments = [command] + args
@@ -18,7 +18,9 @@ enum Shell {
     env["PATH"] = (env["PATH"] ?? "/usr/bin:/bin") + ":/opt/homebrew/bin:/usr/local/bin"
     env["GIT_TERMINAL_PROMPT"] = "0"
     env["GH_PROMPT_DISABLED"] = "1"
+    env["GIT_OPTIONAL_LOCKS"] = "0"
     if env["GIT_SSH_COMMAND"] == nil { env["GIT_SSH_COMMAND"] = "ssh -oBatchMode=yes" }
+    env.merge(extra) { _, new in new }
     process.environment = env
     let out = PipeReader(), err = PipeReader()
     process.standardOutput = out.pipe
@@ -45,7 +47,9 @@ enum Shell {
     }
   }
 
-  static func git(_ args: [String], in dir: String) async -> ShellResult { await run("git", ["-C", dir] + args) }
+  static func git(_ args: [String], in dir: String, env: [String: String] = [:]) async -> ShellResult {
+    await run("git", ["-C", dir] + args, env: env)
+  }
 }
 
 private final class PipeReader: @unchecked Sendable {

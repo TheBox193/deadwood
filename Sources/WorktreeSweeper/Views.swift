@@ -167,6 +167,10 @@ struct StashesTable: View {
       TableColumn("Branch") { s in Text(s.branch ?? "") }
       TableColumn("Verdict", value: \.verdict) { s in VerdictBadge(verdict: s.verdict, pending: !s.audited) }.width(90)
       TableColumn("Date", value: \.date) { s in Text(s.date.shortDisplay) }.width(80)
+      TableColumn("vs main", value: \.fit.rank) { s in
+        Text(s.fit.label).foregroundStyle(s.fit.allInMain ? .secondary : .primary)
+          .help("in main: main already has these changes, dropping loses nothing\nnot in main: main does not have them and the patch would still apply cleanly\nconflicts: main has changed around those lines, so applying would need manual merging")
+      }.width(150)
       TableColumn("Notes") { s in NotesText(s.notes) }
       TableColumn("") { s in
         if s.audited { TrashButton(help: "Drop stash") { model.drop(s) } }
@@ -206,8 +210,8 @@ struct StashPreviewPane: View {
             Button("Drop…", role: .destructive) { model.drop(stash) }
           }
           .controlSize(.small)
-          Text("\(preview.files.count) file\(preview.files.count == 1 ? "" : "s")").font(.callout).foregroundStyle(.secondary)
-          FileStats(files: preview.files)
+          Text(fileSummary(preview.files.count, stash.fit)).font(.callout).foregroundStyle(.secondary)
+          FileStats(files: preview.files, fates: stash.fates)
           Divider()
           DiffText(preview.diff)
         } else {
@@ -220,12 +224,18 @@ struct StashPreviewPane: View {
       Text("Select a stash").foregroundStyle(.secondary).frame(maxWidth: .infinity, maxHeight: .infinity)
     }
   }
+
+  private func fileSummary(_ count: Int, _ fit: PatchFit) -> String {
+    let files = "\(count) file\(count == 1 ? "" : "s")"
+    return fit.label.isEmpty ? files : "\(files) · \(fit.label)"
+  }
 }
 
 struct FileStats: View {
   static let rowHeight: CGFloat = 18
   static let visibleRows = 8
   let files: [StashPreview.File]
+  let fates: [String: PatchFate]
 
   var body: some View {
     ScrollView {
@@ -234,6 +244,7 @@ struct FileStats: View {
           HStack(spacing: 6) {
             Text(file.path).lineLimit(1).truncationMode(.middle).help(file.path)
             Spacer()
+            if let fate = fates[file.path] { Text(fate.rawValue).foregroundStyle(fateColor(fate)) }
             if file.isBinary {
               Text("binary").foregroundStyle(.secondary)
             } else {
@@ -247,6 +258,14 @@ struct FileStats: View {
       }
     }
     .frame(height: CGFloat(min(files.count, Self.visibleRows)) * Self.rowHeight)
+  }
+
+  private func fateColor(_ fate: PatchFate) -> Color {
+    switch fate {
+    case .inMain: .secondary
+    case .applies: .blue
+    case .conflicts: .orange
+    }
   }
 }
 

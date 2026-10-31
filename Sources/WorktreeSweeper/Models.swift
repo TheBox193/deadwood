@@ -132,12 +132,50 @@ struct Stash: Identifiable, Sendable {
 
   var branchExists = false
   var fileCount = 0
+  var fates: [String: PatchFate] = [:]
   var verdict: Verdict = .active
   var notes: [String] = []
   var audited = false
 
   var id: String { sha }
   var isLintStagedBackup: Bool { message.hasPrefix("lint-staged automatic backup") }
+  var fit: PatchFit { PatchFit(fates.values) }
+}
+
+enum PatchFate: String, Sendable {
+  case inMain = "in main"
+  case applies = "not in main"
+  case conflicts = "conflicts"
+}
+
+struct PatchFit: Sendable, Equatable {
+  let inMain: Int
+  let applies: Int
+  let conflicts: Int
+
+  init(_ fates: some Collection<PatchFate>) {
+    inMain = fates.filter { $0 == .inMain }.count
+    applies = fates.filter { $0 == .applies }.count
+    conflicts = fates.filter { $0 == .conflicts }.count
+  }
+
+  var total: Int { inMain + applies + conflicts }
+  var allInMain: Bool { total > 0 && inMain == total }
+
+  var rank: Int {
+    if total == 0 { return 3 }
+    if allInMain { return 0 }
+    if applies == total { return 2 }
+    return 1
+  }
+
+  var label: String {
+    if total == 0 { return "" }
+    if allInMain { return "in main" }
+    if applies == total { return "not in main" }
+    if conflicts == total { return "conflicts" }
+    return "\(inMain) of \(total) in main"
+  }
 }
 
 struct StashPreview: Sendable, Equatable {

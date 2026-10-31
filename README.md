@@ -65,16 +65,16 @@ Per worktree, additionally:
 - Folder creation time, shown as Added and the default sort
 - Disk usage from `du -sk`, loaded after the table appears
 
-Per stash: the branch it was made on and whether that branch still exists, file count, and whether it is a lint-staged automatic backup.
+Per stash: the branch it was made on and whether that branch still exists, file count, whether it is a lint-staged automatic backup, and how it compares to main. The "vs main" column says `in main` when main already contains every change, `not in main` when main has none of it and the whole stash would still apply cleanly, `conflicts` when main has changed around every file, or a per-file count otherwise (`7 of 29 in main`); the preview pane tags each file. The check reads a private index of `origin/main` built with `git read-tree` into a file under the temp folder (`GIT_INDEX_FILE`), then runs `git apply --check --cached` forward and reversed on the stash's patch, per file where the whole patch is mixed. `--check` only reads, so the repo's index, working trees and refs are never written. Every git call also runs with `GIT_OPTIONAL_LOCKS=0`, so `git status` does not refresh the index either.
 
-Selecting a stash opens a preview pane on the right with each file's added and removed line counts and the full diff (`git diff <sha>^1 <sha>`, so untracked files stashed with `-u` are not shown). It has Copy patch, Open patch (writes a `.patch` to the temp folder and opens it with its default app) and Drop buttons. The sidebar button next to Rescan hides it.
+Selecting a stash opens a preview pane on the right with each file's added and removed line counts, its vs-main tag, and the full diff (`git diff <sha>^1 <sha>`, so untracked files stashed with `-u` are not shown). It has Copy patch, Open patch (writes a `.patch` to the temp folder and opens it with its default app) and Drop buttons. The sidebar button next to Rescan hides it.
 
 ## Verdicts
 
 | Verdict   | Worktrees and branches                                              | Stashes                     | Trash button |
 |-----------|----------------------------------------------------------------------|-----------------------------|--------------|
 | Prunable  | Folder gone or git marks it prunable                                 |                             | no confirm   |
-| Dead      | Fully merged and nothing uncommitted                                 | lint-staged automatic backup | no confirm  |
+| Dead      | Fully merged and nothing uncommitted                                 | lint-staged automatic backup, or every file already in main | no confirm  |
 | Near-dead | Merged but with uncommitted files, or has commits the merged PR did not | Its branch no longer exists | confirm   |
 | Stale     | Unmerged and no activity for 14 days                                 | Older than 30 days          | confirm      |
 | In use    | A process is working in the worktree, or the branch is checked out   |                             | confirm      |

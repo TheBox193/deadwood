@@ -103,10 +103,20 @@ private func worktree(status s: BranchStatus, exists: Bool = true, prunable: Boo
 }
 
 @Test func stashVerdicts() {
-  #expect(Judge.stash(isLintStagedBackup: true, branchDeleted: false, date: today) == .dead)
-  #expect(Judge.stash(isLintStagedBackup: false, branchDeleted: true, date: today) == .nearDead)
-  #expect(Judge.stash(isLintStagedBackup: false, branchDeleted: false, date: lastMonth) == .stale)
-  #expect(Judge.stash(isLintStagedBackup: false, branchDeleted: false, date: today) == .active)
+  #expect(Judge.stash(isLintStagedBackup: true, branchDeleted: false, inMain: false, date: today) == .dead)
+  #expect(Judge.stash(isLintStagedBackup: false, branchDeleted: false, inMain: true, date: today) == .dead)
+  #expect(Judge.stash(isLintStagedBackup: false, branchDeleted: true, inMain: false, date: today) == .nearDead)
+  #expect(Judge.stash(isLintStagedBackup: false, branchDeleted: false, inMain: false, date: lastMonth) == .stale)
+  #expect(Judge.stash(isLintStagedBackup: false, branchDeleted: false, inMain: false, date: today) == .active)
+}
+
+@Test func patchFitSummarisesPerFileFates() {
+  #expect(PatchFit([]).label == "" && !PatchFit([]).allInMain && PatchFit([]).rank == 3)
+  #expect(PatchFit([.inMain, .inMain]).label == "in main" && PatchFit([.inMain]).allInMain && PatchFit([.inMain]).rank == 0)
+  #expect(PatchFit([.applies, .applies]).label == "not in main" && PatchFit([.applies]).rank == 2)
+  #expect(PatchFit([.conflicts]).label == "conflicts" && PatchFit([.conflicts]).rank == 1)
+  #expect(PatchFit([.inMain, .applies, .conflicts, .conflicts]).label == "1 of 4 in main")
+  #expect(PatchFit([.inMain, .applies]).label == "1 of 2 in main")
 }
 
 @Test func verdictsSortWorstFirst() {

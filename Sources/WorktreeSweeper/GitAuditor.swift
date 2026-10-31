@@ -26,6 +26,9 @@ struct GitAuditor: RepoAuditor {
   private let processCwds: [(command: String, path: String)]
   private let pullRequests: PullRequestCache
   private let fetchGate = FetchGate()
+  private let mainIndex: String?
+
+  private static let scratchDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("worktree-sweeper", isDirectory: true)
 
   init(repo: String) async {
     self.repo = repo
@@ -37,6 +40,11 @@ struct GitAuditor: RepoAuditor {
     baseBranch = String(baseRef.split(separator: "/", maxSplits: 1).last ?? "main")
     stashLines = await Shell.git(["stash", "list", "--format=%gs"], in: repo).lines
     processCwds = GitScanner.parseProcessCwds(await Shell.run("lsof", ["-a", "-d", "cwd", "-u", "\(getuid())", "-Fcn"]).lines)
+    try? FileManager.default.createDirectory(at: Self.scratchDirectory, withIntermediateDirectories: true)
+    let indexPath = Self.scratchDirectory.appendingPathComponent(repo.replacingOccurrences(of: "/", with: "-") + ".index").path
+    let readTree = await Shell.git(["read-tree", baseRef], in: repo, env: ["GIT_INDEX_FILE": indexPath])
+    mainIndex = readTree.ok ? indexPath : nil
+    if !readTree.ok { warnings.append("Could not index \(baseRef), so stashes are not compared against it: \(readTree.stderr)") }
     pullRequests = await PullRequestCache.load(repo: repo)
     if let failure = pullRequests.failure {
       warnings.append("PR data unavailable, so squash-merged branches look unmerged: \(failure)")
@@ -92,22 +100,46 @@ struct GitAuditor: RepoAuditor {
     if let branch = s.branch {
       s.branchExists = await Shell.git(["rev-parse", "--verify", "-q", "refs/heads/\(branch)"], in: repo).ok
     }
-    s.fileCount = await Shell.git(["diff", "--name-only", "\(s.sha)^1", s.sha], in: repo).lines.count
+    let files = GitScanner.parseNumstat(await Shell.git(["diff", "--no-renames", "--numstat", "\(s.sha)^1", s.sha], in: repo).lines)
+    s.fileCount = files.count
+    s.fates = await patchFates(of: s.sha, paths: files.map(\.path))
 
     s.notes = []
     if s.branch != nil && !s.branchExists { s.notes.append("branch deleted") }
     if s.isLintStagedBackup { s.notes.append("lint-staged backup") }
     s.notes.append("\(s.fileCount) file\(s.fileCount == 1 ? "" : "s")")
 
-    s.verdict = Judge.stash(isLintStagedBackup: s.isLintStagedBackup, branchDeleted: s.branch != nil && !s.branchExists, date: s.date)
+    s.verdict = Judge.stash(isLintStagedBackup: s.isLintStagedBackup, branchDeleted: s.branch != nil && !s.branchExists,
+                            inMain: s.fit.allInMain, date: s.date)
     s.audited = true
     return s
   }
 
   func preview(_ stash: Stash) async -> StashPreview {
-    async let numstat = Shell.git(["diff", "--numstat", "\(stash.sha)^1", stash.sha], in: repo)
-    async let diff = Shell.git(["diff", "\(stash.sha)^1", stash.sha], in: repo)
+    async let numstat = Shell.git(["diff", "--no-renames", "--numstat", "\(stash.sha)^1", stash.sha], in: repo)
+    async let diff = Shell.git(["diff", "--no-renames", "\(stash.sha)^1", stash.sha], in: repo)
     return StashPreview(sha: stash.sha, files: GitScanner.parseNumstat(await numstat.lines), diff: await diff.stdout)
+  }
+
+  /// Every check runs against a private index of the base branch (`GIT_INDEX_FILE`) with `--check`, so nothing in the repo is written.
+  private func patchFates(of sha: String, paths: [String]) async -> [String: PatchFate] {
+    guard let mainIndex, !paths.isEmpty else { return [:] }
+    let patch = Self.scratchDirectory.appendingPathComponent("\(sha).patch")
+    let diff = await Shell.git(["diff", "--no-renames", "\(sha)^1", sha], in: repo).stdout
+    guard (try? (diff + "\n").write(to: patch, atomically: true, encoding: .utf8)) != nil else { return [:] }
+    defer { try? FileManager.default.removeItem(at: patch) }
+    func passes(_ options: [String]) async -> Bool {
+      await Shell.git(["apply", "--check", "--cached"] + options + [patch.path], in: repo, env: ["GIT_INDEX_FILE": mainIndex]).ok
+    }
+    if await passes(["-R"]) { return Dictionary(uniqueKeysWithValues: paths.map { ($0, PatchFate.inMain) }) }
+    if await passes([]) { return Dictionary(uniqueKeysWithValues: paths.map { ($0, PatchFate.applies) }) }
+    var fates: [String: PatchFate] = [:]
+    for path in paths {
+      if await passes(["-R", "--include=\(path)"]) { fates[path] = .inMain }
+      else if await passes(["--include=\(path)"]) { fates[path] = .applies }
+      else { fates[path] = .conflicts }
+    }
+    return fates
   }
 
   private func branchStatus(head: String, branch: String?, lastCommitDate: Date) async -> BranchStatus {
