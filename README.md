@@ -30,14 +30,18 @@ swift test
 
 ## Layout
 
-| File              | Holds                                                                 |
-|-------------------|-----------------------------------------------------------------------|
-| `Shell.swift`     | Runs `git`, `gh`, `lsof`, `du` and returns their output                |
-| `Models.swift`    | `Verdict`, `PullRequest`, `BranchStatus`, `Worktree`, `LocalBranch`, `Stash`, date helpers |
-| `Auditor.swift`   | Discovers items, gathers facts, performs removals                      |
-| `Judge.swift`     | Pure verdict rules, covered by `Tests/JudgeTests.swift`; parsers in `Tests/ParserTests.swift` |
-| `Model.swift`     | `SweeperModel`: per-tab loading, disk sizes, confirmations             |
-| `Views.swift`     | The window, three tables, status icon and badge                        |
+| File                     | Holds                                                                 |
+|--------------------------|-----------------------------------------------------------------------|
+| `Shell.swift`            | Runs `git`, `gh`, `lsof`, `du` and returns their output               |
+| `Models.swift`           | `Verdict`, `PullRequest`, `BranchStatus`, `Worktree`, `LocalBranch`, `Stash`, date helpers |
+| `Scanner.swift`          | `RepoScanner` / `RepoAuditor` protocols; `GitScanner` lists worktrees, branches, stashes |
+| `Parsers.swift`          | Pure parsers for git and lsof output, covered by `Tests/ParserTests.swift` |
+| `GitAuditor.swift`       | Gathers facts per item, judges, performs removals                     |
+| `PullRequestCache.swift` | One bulk `gh pr list`, indexed by branch and head SHA                 |
+| `Concurrency.swift`      | Bounded parallel map                                                  |
+| `Judge.swift`            | Pure verdict rules, covered by `Tests/JudgeTests.swift`               |
+| `Model.swift`            | `SweeperModel`: per-tab loading, disk sizes, confirmations; covered by `Tests/ModelTests.swift` with a fake scanner |
+| `Views.swift`            | The window, three tables, status icon and badge                       |
 | `App.swift`       | Entry point, About panel, `--audit` text mode                          |
 
 ## What it checks
@@ -55,7 +59,7 @@ Per branch or worktree:
 
 Per worktree, additionally:
 
-- Uncommitted files, ignoring `.vscode/settings.json` (edit `Auditor.ignoredDirtyPaths`)
+- Uncommitted files, ignoring `.vscode/settings.json` (edit `GitAuditor.ignoredDirtyPaths`)
 - Processes whose working directory is inside it, from `lsof`
 - Whether the folder still exists or git marks the entry prunable
 - Folder creation time, shown as Added and the default sort

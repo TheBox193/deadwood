@@ -40,11 +40,12 @@ struct WorktreeSweeperApp: App {
   }
 
   private static func printAudit(repo: String) async {
-    let auditor = await Auditor(repo: repo)
+    let scanner = GitScanner()
+    let auditor = await scanner.makeAuditor(repo: repo)
     for warning in auditor.warnings { print("!! \(warning)") }
-    let worktrees = await Auditor.auditAll(Auditor.discoverWorktrees(repo: repo)) { await auditor.audit($0) }
-    let branches = await Auditor.auditAll(Auditor.discoverBranches(repo: repo, worktrees: worktrees)) { await auditor.audit($0) }
-    let stashes = await Auditor.auditAll(Auditor.discoverStashes(repo: repo)) { await auditor.audit($0) }
+    let worktrees = await auditAll(scanner.discoverWorktrees(repo: repo)) { await auditor.audit($0) }
+    let branches = await auditAll(scanner.discoverBranches(repo: repo, worktrees: worktrees)) { await auditor.audit($0) }
+    let stashes = await auditAll(scanner.discoverStashes(repo: repo)) { await auditor.audit($0) }
     printSection("Worktrees", worktrees.map { ($0.verdict, $0.status.lastCommitDate, "\($0.name) [\($0.branchLabel)]", $0.notes) })
     printSection("Branches", branches.map { ($0.verdict, $0.status.lastCommitDate, $0.name, $0.notes) })
     printSection("Stashes", stashes.map { ($0.verdict, $0.date, $0.message, $0.notes) })

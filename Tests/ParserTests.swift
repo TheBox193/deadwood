@@ -18,7 +18,7 @@ import Testing
   prunable gitdir file points to non-existent location
 
   """
-  let wts = Auditor.parseWorktrees(porcelain)
+  let wts = GitScanner.parseWorktrees(porcelain)
   #expect(wts.count == 3)
   #expect(wts[0].isMainCheckout && wts[0].branch == "main")
   #expect(!wts[1].isMainCheckout && wts[1].branch == nil && wts[1].branchLabel == "detached @ 2222222")
@@ -26,8 +26,8 @@ import Testing
 }
 
 @Test func branchLinesCarryGoneUpstreamAndWorktreePath() {
-  let wts = Auditor.parseWorktrees("worktree /repo\nHEAD aaa\nbranch refs/heads/main\n\nworktree /wt\nHEAD bbb\nbranch refs/heads/feat\n")
-  let branches = Auditor.parseBranches(["main|aaa||1700000000", "feat|bbb|[gone]|1700000001", "other|ccc|[ahead 1]|1700000002", "malformed"], worktrees: wts)
+  let wts = GitScanner.parseWorktrees("worktree /repo\nHEAD aaa\nbranch refs/heads/main\n\nworktree /wt\nHEAD bbb\nbranch refs/heads/feat\n")
+  let branches = GitScanner.parseBranches(["main|aaa||1700000000", "feat|bbb|[gone]|1700000001", "other|ccc|[ahead 1]|1700000002", "malformed"], worktrees: wts)
   #expect(branches.map(\.name) == ["main", "feat", "other"])
   #expect(branches[1].upstreamGone && branches[1].worktreePath == "/wt")
   #expect(!branches[2].upstreamGone && branches[2].worktreePath == nil)
@@ -35,12 +35,12 @@ import Testing
 }
 
 @Test func commitDateLinesMapShaToDate() {
-  let dates = Auditor.parseCommitDates(["aaa 1700000000", "bbb 1700000001", "junk"])
+  let dates = GitScanner.parseCommitDates(["aaa 1700000000", "bbb 1700000001", "junk"])
   #expect(dates["aaa"] == Date(timeIntervalSince1970: 1_700_000_000) && dates["bbb"] != nil && dates.count == 2)
 }
 
 @Test func stashLinesKeepPipesInMessagesAndFindTheBranch() {
-  let stashes = Auditor.parseStashes([
+  let stashes = GitScanner.parseStashes([
     "abc|1700000000|WIP on feat/x: 1234567 Merge a|b",
     "def|1700000001|On main: brb",
     "ghi|1700000002|lint-staged automatic backup",
@@ -54,7 +54,7 @@ import Testing
 }
 
 @Test func lsofFieldsPairCommandsWithDirectories() {
-  let cwds = Auditor.parseProcessCwds(["p123", "cclaude", "n/repo/wt-a", "p456", "czsh", "n/repo/wt-b", "p789", "cnode", "n/elsewhere"])
+  let cwds = GitScanner.parseProcessCwds(["p123", "cclaude", "n/repo/wt-a", "p456", "czsh", "n/repo/wt-b", "p789", "cnode", "n/elsewhere"])
   #expect(cwds.map(\.command) == ["claude", "zsh", "node"])
   #expect(cwds.map(\.path) == ["/repo/wt-a", "/repo/wt-b", "/elsewhere"])
 }

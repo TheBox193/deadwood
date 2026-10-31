@@ -9,7 +9,7 @@ struct PendingAction: Identifiable {
   let perform: () -> Void
 }
 
-struct Recovery {
+struct Recovery: Equatable {
   let message: String
   let command: String?
 }
@@ -21,9 +21,7 @@ final class SweeperModel: ObservableObject {
   private static let repoPathKey = "repoPath"
   enum Tab: CaseIterable { case worktrees, branches, stashes }
 
-  @Published var repoPath = UserDefaults.standard.string(forKey: repoPathKey) ?? defaultRepo {
-    didSet { UserDefaults.standard.set(repoPath, forKey: Self.repoPathKey) }
-  }
+  @Published var repoPath: String { didSet { defaults.set(repoPath, forKey: Self.repoPathKey) } }
   @Published var tab: Tab = .worktrees { didSet { load(tab) } }
   @Published var worktrees: [Worktree] = []
   @Published var branches: [LocalBranch] = []
@@ -41,11 +39,23 @@ final class SweeperModel: ObservableObject {
   @Published var worktreeSort = [KeyPathComparator(\Worktree.created)]
   @Published var branchSort = [KeyPathComparator(\LocalBranch.status.lastCommitDate)]
   @Published var stashSort = [KeyPathComparator(\Stash.date)]
-  let openTargets = OpenTarget.detectAll()
+  let openTargets: [OpenTarget]
 
-  private var auditor: Auditor?
+  private let scanner: any RepoScanner
+  private let defaults: UserDefaults
+  private let now: () -> Date
+  private var auditor: (any RepoAuditor)?
   private var loaded: Set<Tab> = []
   private var tasks: [Task<Void, Never>] = []
+
+  init(scanner: any RepoScanner = GitScanner(), defaults: UserDefaults = .standard,
+       openTargets: [OpenTarget] = OpenTarget.detectAll(), now: @escaping () -> Date = Date.init) {
+    self.scanner = scanner
+    self.defaults = defaults
+    self.openTargets = openTargets
+    self.now = now
+    repoPath = defaults.string(forKey: Self.repoPathKey) ?? Self.defaultRepo
+  }
 
   var isLoading: Bool { activeLoads > 0 }
 
@@ -58,30 +68,35 @@ final class SweeperModel: ObservableObject {
   // MARK: Loading
 
   func rescan() {
+    errorMessage = nil
+    recovery = nil
+    reload()
+  }
+
+  private func reload() {
     tasks.forEach { $0.cancel() }
     tasks = []
     auditor = nil
     loaded = []
     activeLoads = 0
-    errorMessage = nil
     warnings = []
-    recovery = nil
     let repo = (repoPath as NSString).expandingTildeInPath
+    let scanner = self.scanner
     track(Task {
-      let foundWorktrees = await Auditor.discoverWorktrees(repo: repo)
+      let foundWorktrees = await scanner.discoverWorktrees(repo: repo)
       guard !Task.isCancelled else { return }
       worktrees = foundWorktrees.sorted(using: worktreeSort)
       if foundWorktrees.isEmpty { errorMessage = "No worktrees found at \(repo). Is it a git repo?" }
-      let foundBranches = await Auditor.discoverBranches(repo: repo, worktrees: foundWorktrees)
+      let foundBranches = await scanner.discoverBranches(repo: repo, worktrees: foundWorktrees)
       guard !Task.isCancelled else { return }
       branches = foundBranches.sorted(using: branchSort)
-      let foundStashes = await Auditor.discoverStashes(repo: repo)
+      let foundStashes = await scanner.discoverStashes(repo: repo)
       guard !Task.isCancelled else { return }
       stashes = foundStashes.sorted(using: stashSort)
-      let auditor = await Auditor(repo: repo)
+      let auditor = await scanner.makeAuditor(repo: repo)
       guard !Task.isCancelled else { return }
       self.auditor = auditor
-      scannedAt = Date()
+      scannedAt = now()
       warnings = auditor.warnings
       load(tab)
       await measureDiskUsage(foundWorktrees.filter(\.exists).map(\.path))
@@ -93,11 +108,11 @@ final class SweeperModel: ObservableObject {
     loaded.insert(tab)
     switch tab {
     case .worktrees:
-      track(Task { await fill(worktrees, sortedBy: worktreeSort, audit: { await auditor.audit($0) }) { self.worktrees = $0 } })
+      track(Task { await fill(\.worktrees, sortedBy: worktreeSort, audit: { await auditor.audit($0) }) { live, audited in audited.diskKB = live.diskKB } })
     case .branches:
-      track(Task { await fill(branches, sortedBy: branchSort, audit: { await auditor.audit($0) }) { self.branches = $0 } })
+      track(Task { await fill(\.branches, sortedBy: branchSort, audit: { await auditor.audit($0) }) })
     case .stashes:
-      track(Task { await fill(stashes, sortedBy: stashSort, audit: { await auditor.audit($0) }) { self.stashes = $0 } })
+      track(Task { await fill(\.stashes, sortedBy: stashSort, audit: { await auditor.audit($0) }) })
     }
   }
 
@@ -110,22 +125,21 @@ final class SweeperModel: ObservableObject {
     }
   }
 
-  private func fill<T: Identifiable & Sendable>(_ items: [T], sortedBy sort: [KeyPathComparator<T>],
-                                                audit: @escaping @Sendable (T) async -> T, update: ([T]) -> Void) async {
-    var rows = items
-    await mapConcurrently(items, audit) { audited in
-      if let index = rows.firstIndex(where: { $0.id == audited.id }) {
-        rows[index] = audited
-        update(rows)
-      }
+  private func fill<T: Identifiable & Sendable>(_ rows: ReferenceWritableKeyPath<SweeperModel, [T]>, sortedBy sort: [KeyPathComparator<T>],
+                                                audit: @escaping @Sendable (T) async -> T, keeping merge: (T, inout T) -> Void = { _, _ in }) async {
+    await mapConcurrently(self[keyPath: rows], audit) { audited in
+      guard let index = self[keyPath: rows].firstIndex(where: { $0.id == audited.id }) else { return }
+      var row = audited
+      merge(self[keyPath: rows][index], &row)
+      self[keyPath: rows][index] = row
     }
     guard !Task.isCancelled else { return }
-    rows.sort(using: sort)
-    update(rows)
+    self[keyPath: rows].sort(using: sort)
   }
 
   private func measureDiskUsage(_ paths: [String]) async {
-    await mapConcurrently(paths, limit: 4, { path in (path, Int(await Shell.run("du", ["-sk", path]).stdout.split(separator: "\t").first ?? "")) }) { path, kb in
+    let scanner = self.scanner
+    await mapConcurrently(paths, limit: 4, { path in (path, await scanner.diskUsageKB(of: path)) }) { path, kb in
       if let index = worktrees.firstIndex(where: { $0.path == path }) { worktrees[index].diskKB = kb }
     }
   }
@@ -152,10 +166,10 @@ final class SweeperModel: ObservableObject {
 
   private var scanIsFresh: Bool {
     guard let scannedAt else { return false }
-    return Date().timeIntervalSince(scannedAt) <= Self.maxScanAge
+    return now().timeIntervalSince(scannedAt) <= Self.maxScanAge
   }
 
-  private func readyAuditor() -> Auditor? {
+  private func readyAuditor() -> (any RepoAuditor)? {
     guard scanIsFresh else { rescanNeeded = true; return nil }
     return auditor
   }
@@ -221,9 +235,11 @@ final class SweeperModel: ObservableObject {
       let result = await action()
       guard !Task.isCancelled else { return }
       guard result.ok else {
+        recovery = nil
         errorMessage = result.stderr
-        return rescan()
+        return reload()
       }
+      errorMessage = nil
       onSuccess()
       if let auditor { self.auditor = await auditor.refreshingStashes() }
       loaded = [tab]
