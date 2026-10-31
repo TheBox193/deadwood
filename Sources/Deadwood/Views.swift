@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct ContentView: View {
-  @StateObject private var model = SweeperModel()
+  @StateObject private var model = DeadwoodModel()
 
   var body: some View {
     VStack(spacing: 0) {
@@ -23,9 +23,9 @@ struct ContentView: View {
       .padding()
 
       TabView(selection: $model.tab) {
-        WorktreesTable(model: model).tabItem { Text(countedTitle("Worktrees", model.worktrees.count)) }.tag(SweeperModel.Tab.worktrees)
-        BranchesTable(model: model).tabItem { Text(countedTitle("Branches", model.branches.count)) }.tag(SweeperModel.Tab.branches)
-        StashesTable(model: model).tabItem { Text(countedTitle("Stashes", model.stashes.count)) }.tag(SweeperModel.Tab.stashes)
+        WorktreesTable(model: model).tabItem { Text(countedTitle("Worktrees", model.worktrees.count)) }.tag(DeadwoodModel.Tab.worktrees)
+        BranchesTable(model: model).tabItem { Text(countedTitle("Branches", model.branches.count)) }.tag(DeadwoodModel.Tab.branches)
+        StashesTable(model: model).tabItem { Text(countedTitle("Stashes", model.stashes.count)) }.tag(DeadwoodModel.Tab.stashes)
       }
       .padding(.horizontal)
       .onDeleteCommand(perform: model.removeSelected)
@@ -86,7 +86,7 @@ struct ContentView: View {
 }
 
 struct WorktreesTable: View {
-  @ObservedObject var model: SweeperModel
+  @ObservedObject var model: DeadwoodModel
 
   var body: some View {
     Table(model.worktrees, selection: $model.worktreeSelection, sortOrder: $model.worktreeSort) {
@@ -133,7 +133,7 @@ struct WorktreesTable: View {
 }
 
 struct BranchesTable: View {
-  @ObservedObject var model: SweeperModel
+  @ObservedObject var model: DeadwoodModel
 
   var body: some View {
     Table(model.branches, selection: $model.branchSelection, sortOrder: $model.branchSort) {
@@ -159,7 +159,7 @@ struct BranchesTable: View {
 }
 
 struct StashesTable: View {
-  @ObservedObject var model: SweeperModel
+  @ObservedObject var model: DeadwoodModel
 
   var body: some View {
     Table(model.stashes, selection: $model.stashSelection, sortOrder: $model.stashSort) {
@@ -188,7 +188,7 @@ struct StashesTable: View {
 }
 
 struct StashPreviewPane: View {
-  @ObservedObject var model: SweeperModel
+  @ObservedObject var model: DeadwoodModel
 
   var body: some View {
     if let stash = model.selectedStash {

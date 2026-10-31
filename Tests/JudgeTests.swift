@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import WorktreeSweeper
+@testable import Deadwood
 
 private let today = Date()
 private let lastMonth = Calendar.current.date(byAdding: .day, value: -40, to: today)!

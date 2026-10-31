@@ -1,4 +1,4 @@
-# Worktree Sweeper
+# Deadwood
 
 A small SwiftUI app that lists a repository's git worktrees, local branches and stashes, judges whether each is safe to delete, and removes them on request.
 
@@ -11,10 +11,10 @@ swift run
 Print the same audit as text without opening a window (the path defaults to the current directory):
 
 ```bash
-swift run WorktreeSweeper --audit /path/to/repo
+swift run Deadwood --audit /path/to/repo
 ```
 
-Build a double-clickable app (`dist/Worktree Sweeper.app`, ad-hoc signed):
+Build a double-clickable app (`dist/Deadwood.app`, ad-hoc signed):
 
 ```bash
 ./make-app.sh
@@ -40,7 +40,7 @@ swift test
 | `PullRequestCache.swift` | One bulk `gh pr list`, indexed by branch and head SHA                 |
 | `Concurrency.swift`      | Bounded parallel map                                                  |
 | `Judge.swift`            | Pure verdict rules, covered by `Tests/JudgeTests.swift`               |
-| `Model.swift`            | `SweeperModel`: per-tab loading, disk sizes, confirmations; covered by `Tests/ModelTests.swift` with a fake scanner |
+| `Model.swift`            | `DeadwoodModel`: per-tab loading, disk sizes, confirmations; covered by `Tests/ModelTests.swift` with a fake scanner |
 | `Views.swift`            | The window, three tables, status icon and badge                       |
 | `App.swift`       | Entry point, About panel, `--audit` text mode                          |
 
@@ -52,7 +52,7 @@ Rows appear as soon as `git` lists them; verdicts stream in once the auditor has
 
 Per branch or worktree:
 
-- Pull request state, and whether the local tip is the commit that merged (or an ancestor of it, after fetching `refs/pull/N/head` into `refs/sweeper/pull/N` if needed). Detached worktrees match PRs by commit SHA.
+- Pull request state, and whether the local tip is the commit that merged (or an ancestor of it, after fetching `refs/pull/N/head` into `refs/deadwood/pull/N` if needed). Detached worktrees match PRs by commit SHA.
 - Commits ahead of `origin/HEAD`, whether the branch is pushed, whether the remote was deleted
 - Stash entries made on the branch (shown as a note only; a stash keeps its base commit, so deleting the branch loses nothing)
 - Last commit date

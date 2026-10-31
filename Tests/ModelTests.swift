@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import WorktreeSweeper
+@testable import Deadwood
 
 actor Gate {
   private var isOpen: Bool
@@ -98,13 +98,13 @@ private extension Array {
 }
 
 @MainActor
-private func makeModel(_ auditor: FakeAuditor, path: String = "/repo", defaults: UserDefaults = freshDefaults(), clock: Clock = Clock()) -> SweeperModel {
-  let model = SweeperModel(scanner: FakeScanner(auditor: auditor), defaults: defaults, openTargets: []) { clock.now }
+private func makeModel(_ auditor: FakeAuditor, path: String = "/repo", defaults: UserDefaults = freshDefaults(), clock: Clock = Clock()) -> DeadwoodModel {
+  let model = DeadwoodModel(scanner: FakeScanner(auditor: auditor), defaults: defaults, openTargets: []) { clock.now }
   model.repoPath = path
   return model
 }
 
-private func freshDefaults() -> UserDefaults { UserDefaults(suiteName: "WorktreeSweeperTests-\(UUID().uuidString)")! }
+private func freshDefaults() -> UserDefaults { UserDefaults(suiteName: "DeadwoodTests-\(UUID().uuidString)")! }
 
 @MainActor
 private func waitUntil(_ condition: @MainActor () -> Bool, sourceLocation: SourceLocation = #_sourceLocation) async {
@@ -196,7 +196,7 @@ private func waitUntil(_ condition: @MainActor () -> Bool, sourceLocation: Sourc
   model.rescan()
   await waitUntil { model.worktrees.allAudited(\.audited) }
 
-  clock.now += SweeperModel.maxScanAge + 1
+  clock.now += DeadwoodModel.maxScanAge + 1
   model.remove(model.worktrees.first { $0.branch == "feature" }!)
   #expect(model.rescanNeeded)
   #expect(model.pending == nil)
@@ -220,10 +220,10 @@ private func waitUntil(_ condition: @MainActor () -> Bool, sourceLocation: Sourc
 
 @MainActor @Test func theRepoPathIsRemembered() {
   let defaults = freshDefaults()
-  let fresh = SweeperModel(scanner: FakeScanner(auditor: FakeAuditor()), defaults: defaults, openTargets: [])
+  let fresh = DeadwoodModel(scanner: FakeScanner(auditor: FakeAuditor()), defaults: defaults, openTargets: [])
   #expect(fresh.repoPath == "")
   fresh.repoPath = "~/Code/other"
-  #expect(SweeperModel(scanner: FakeScanner(auditor: FakeAuditor()), defaults: defaults, openTargets: []).repoPath == "~/Code/other")
+  #expect(DeadwoodModel(scanner: FakeScanner(auditor: FakeAuditor()), defaults: defaults, openTargets: []).repoPath == "~/Code/other")
 }
 
 @MainActor @Test func selectingAStashLoadsItsPreviewAndDroppingClearsIt() async {

@@ -2,10 +2,10 @@
 import PackageDescription
 
 let package = Package(
-  name: "WorktreeSweeper",
+  name: "Deadwood",
   platforms: [.macOS(.v14)],
   targets: [
-    .executableTarget(name: "WorktreeSweeper", path: "Sources/WorktreeSweeper", swiftSettings: [.swiftLanguageMode(.v5)]),
-    .testTarget(name: "WorktreeSweeperTests", dependencies: ["WorktreeSweeper"], path: "Tests", swiftSettings: [.swiftLanguageMode(.v5)]),
+    .executableTarget(name: "Deadwood", path: "Sources/Deadwood", swiftSettings: [.swiftLanguageMode(.v5)]),
+    .testTarget(name: "DeadwoodTests", dependencies: ["Deadwood"], path: "Tests", swiftSettings: [.swiftLanguageMode(.v5)]),
   ]
 )

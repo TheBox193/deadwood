@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import WorktreeSweeper
+@testable import Deadwood
 
 @Test func worktreePorcelainParsesMainDetachedAndPrunable() {
   let porcelain = """

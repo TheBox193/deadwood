@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 @main
-struct WorktreeSweeperApp: App {
+struct DeadwoodApp: App {
   init() {
     if let index = CommandLine.arguments.firstIndex(of: "--audit") {
       let repo = CommandLine.arguments.dropFirst(index + 1).first ?? FileManager.default.currentDirectoryPath
@@ -13,7 +13,7 @@ struct WorktreeSweeperApp: App {
   }
 
   var body: some Scene {
-    WindowGroup("Worktree Sweeper") {
+    WindowGroup("Deadwood") {
       ContentView()
         .frame(minWidth: 1000, minHeight: 500)
         .onAppear { NSApp.activate(ignoringOtherApps: true) }
@@ -21,7 +21,7 @@ struct WorktreeSweeperApp: App {
     .defaultSize(width: 1400, height: 800)
     .commands {
       CommandGroup(replacing: .appInfo) {
-        Button("About Worktree Sweeper") { Self.showAbout() }
+        Button("About Deadwood") { Self.showAbout() }
       }
     }
   }
@@ -32,7 +32,7 @@ struct WorktreeSweeperApp: App {
     let credits = NSMutableAttributedString(string: "Made by Jonathan Stassen\n", attributes: [.font: font])
     credits.append(NSAttributedString(string: "jstassen.com", attributes: [.font: font, .link: "https://jstassen.com"]))
     NSApplication.shared.orderFrontStandardAboutPanel(options: [
-      .applicationName: "Worktree Sweeper",
+      .applicationName: "Deadwood",
       .applicationVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "dev",
       .credits: credits,
       NSApplication.AboutPanelOptionKey(rawValue: "Copyright"): "© \(year) Jonathan Stassen",

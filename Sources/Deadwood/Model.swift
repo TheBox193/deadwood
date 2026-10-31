@@ -15,7 +15,7 @@ struct Recovery: Equatable {
 }
 
 @MainActor
-final class SweeperModel: ObservableObject {
+final class DeadwoodModel: ObservableObject {
   static let defaultRepo = ""
   static let maxScanAge: TimeInterval = 20 * 60
   private static let repoPathKey = "repoPath"
@@ -131,7 +131,7 @@ final class SweeperModel: ObservableObject {
     }
   }
 
-  private func fill<T: Identifiable & Sendable>(_ rows: ReferenceWritableKeyPath<SweeperModel, [T]>, sortedBy sort: [KeyPathComparator<T>],
+  private func fill<T: Identifiable & Sendable>(_ rows: ReferenceWritableKeyPath<DeadwoodModel, [T]>, sortedBy sort: [KeyPathComparator<T>],
                                                 audit: @escaping @Sendable (T) async -> T, keeping merge: (T, inout T) -> Void = { _, _ in }) async {
     await mapConcurrently(self[keyPath: rows], audit) { audited in
       guard let index = self[keyPath: rows].firstIndex(where: { $0.id == audited.id }) else { return }

@@ -1,14 +1,14 @@
 #!/bin/zsh
 set -euo pipefail
 cd "$(dirname "$0")"
-NAME="Worktree Sweeper"
+NAME="Deadwood"
 VERSION="0.1"
 APP="dist/$NAME.app"
 
 swift build -c release
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp .build/release/WorktreeSweeper "$APP/Contents/MacOS/$NAME"
+cp .build/release/Deadwood "$APP/Contents/MacOS/$NAME"
 [[ -f icon.icns ]] && cp icon.icns "$APP/Contents/Resources/icon.icns"
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -16,7 +16,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <plist version="1.0"><dict>
   <key>CFBundleName</key><string>$NAME</string>
   <key>CFBundleDisplayName</key><string>$NAME</string>
-  <key>CFBundleIdentifier</key><string>me.jonathanstassen.worktree-sweeper</string>
+  <key>CFBundleIdentifier</key><string>com.jstassen.deadwood</string>
   <key>CFBundleExecutable</key><string>$NAME</string>
   <key>CFBundleIconFile</key><string>icon</string>
   <key>CFBundlePackageType</key><string>APPL</string>

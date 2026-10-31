@@ -8,7 +8,7 @@ actor FetchGate {
     let previous = last
     let task = Task {
       await previous?.value
-      _ = await Shell.git(["fetch", "-q", "--no-tags", "origin", "+refs/pull/\(number)/head:refs/sweeper/pull/\(number)"], in: repo)
+      _ = await Shell.git(["fetch", "-q", "--no-tags", "origin", "+refs/pull/\(number)/head:refs/deadwood/pull/\(number)"], in: repo)
     }
     last = task
     await task.value
@@ -28,7 +28,7 @@ struct GitAuditor: RepoAuditor {
   private let fetchGate = FetchGate()
   private let mainIndex: String?
 
-  private static let scratchDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("worktree-sweeper", isDirectory: true)
+  private static let scratchDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("deadwood", isDirectory: true)
 
   init(repo: String) async {
     self.repo = repo
