@@ -2,6 +2,16 @@
 
 A small SwiftUI app that lists a repository's git worktrees, local branches and stashes, judges whether each is safe to delete, and removes them on request.
 
+## Download
+
+Grab `Deadwood-<version>.zip` from the [releases page](https://github.com/TheBox193/deadwood/releases), unzip, and drag `Deadwood.app` to Applications. It is ad-hoc signed, not notarized, so the first launch needs a right-click → Open, or:
+
+```bash
+xattr -d com.apple.quarantine /Applications/Deadwood.app
+```
+
+Requires macOS 14 and `git`; `gh` (logged in) is optional but needed to recognise squash-merged branches.
+
 ## Run
 
 ```bash
