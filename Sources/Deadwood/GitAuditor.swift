@@ -16,8 +16,6 @@ actor FetchGate {
 }
 
 struct GitAuditor: RepoAuditor {
-  static let ignoredDirtyPaths: Set<String> = [".vscode/settings.json"]
-
   let repo: String
   let baseRef: String
   let baseBranch: String
@@ -66,7 +64,6 @@ struct GitAuditor: RepoAuditor {
     if w.exists {
       w.dirtyFiles = await Shell.git(["status", "--porcelain"], in: w.path).lines
         .map { String($0.dropFirst(3)) }
-        .filter { !Self.ignoredDirtyPaths.contains($0) }
     }
     w.usedBy = processesWorking(in: w.path)
 

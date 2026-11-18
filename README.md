@@ -69,7 +69,7 @@ Per branch or worktree:
 
 Per worktree, additionally:
 
-- Uncommitted files, ignoring `.vscode/settings.json` (edit `GitAuditor.ignoredDirtyPaths`)
+- Uncommitted files
 - Processes whose working directory is inside it, from `lsof`
 - Whether the folder still exists or git marks the entry prunable
 - Folder creation time, shown as Added and the default sort
